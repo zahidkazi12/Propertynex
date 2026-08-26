@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "rootDir": "..",
+    "outDir": ".build",
+    "baseUrl": ".",
+    "paths": {
+      "server-only": ["stubs/server-only.ts"],
+      "@/*": ["../*"]
+    },
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "unit/**/*.ts",
+    "integration/**/*.ts",
+    "stubs/**/*.ts",
+    "../lib/auth/rate-limit.ts",
+    "../lib/otp/code.ts",
+    "../lib/otp/config.ts",
+    "../lib/otp/providers/index.ts",
+    "../lib/otp/providers/console.ts",
+    "../lib/otp/providers/resend.ts",
+    "../lib/otp/providers/twilio.ts",
+    "../lib/otp/providers/types.ts",
+    "../lib/utils/identifier.ts",
+    "../lib/utils/timing.ts",
+    "../lib/media/constants.ts",
+    "../lib/media/image.ts",
+    "../lib/media/keys.ts",
+    "../lib/media/order.ts",
+    "../lib/media/serialize.ts",
+    "../lib/media/storage/local.ts",
+    "../lib/validation/media.ts"
+  ]
+}

@@ -1,0 +1,54 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files — never commit real secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# tests
+/tests/.build
+
+# local dev/prod server logs captured for integration tests
+dev-server.log
+devpid.txt
+prod-server.log
+prodpid.txt
+
+# prisma
+/prisma/dev.db
+
+# uploaded property photos (local media storage driver)
+# User content, not source. The default MEDIA_STORAGE_DIR; deliberately outside
+# public/ so the static handler cannot serve it without an access check.
+/.media-storage

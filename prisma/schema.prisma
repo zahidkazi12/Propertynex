@@ -1,0 +1,589 @@
+// PROPERTYNEX — Prisma schema (MongoDB)
+//
+// Architectural notes:
+// - MongoDB's Prisma connector requires ObjectId-based IDs (@db.ObjectId).
+// - Passwords are NEVER stored in plaintext — only bcrypt hashes (see
+//   lib/auth/password.ts). One-time passcodes are never stored in plaintext
+//   either — only a keyed HMAC (see lib/otp/code.ts).
+// - Session and PasswordResetSession are separate models so that browsing
+//   sessions and the password-recovery flow never share a token namespace.
+// - Property and PropertyInquiry are implemented (Phase 3), PropertyMedia
+//   (Phase 4) and Favorite (Phase 5). The remaining marketplace models
+//   (Message, Notification, …) are still stubbed at the bottom, commented out,
+//   so the schema documents where they will attach without prematurely
+//   implementing them.
+// - PropertyMedia stores only a storage *key*, never bytes and never a public
+//   URL. Which backend holds the bytes is a deployment concern
+//   (lib/media/storage/), and the key never reaches a browser — media is served
+//   through /api/media/[id], which resolves the row and streams it.
+// - Nothing in the property models is trusted from a client. `ownerId` is
+//   always written from the server-verified session, and `status` only ever
+//   moves through the transitions in lib/properties/status.ts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  OWNER
+  AGENT
+  BUILDER
+  ADMIN
+}
+
+/// Lifecycle of a listing. Deliberately a single enum rather than a status plus
+/// a separate `verified` flag, because the two are not independent in this
+/// product: a listing that is awaiting verification is not simultaneously
+/// published, and the dashboard shows one state per property.
+///
+/// VERIFIED is NOT reachable by an owner. `PENDING_VERIFICATION -> VERIFIED` is
+/// the only transition into it and it requires Role.ADMIN — there is no
+/// automated verification in this milestone, so nothing sets it implicitly.
+/// See lib/properties/status.ts for the full transition table.
+enum PropertyStatus {
+  DRAFT
+  PUBLISHED
+  UNPUBLISHED
+  PENDING_VERIFICATION
+  VERIFIED
+}
+
+enum ListingType {
+  BUY
+  RENT
+}
+
+enum PropertyType {
+  APARTMENT
+  INDEPENDENT_HOUSE
+  VILLA
+  BUILDER_FLOOR
+  PENTHOUSE
+  STUDIO
+  PLOT
+  FARMHOUSE
+  PG_HOSTEL
+  OFFICE
+  SHOP
+  SHOWROOM
+  WAREHOUSE
+  COMMERCIAL_LAND
+}
+
+enum AreaUnit {
+  SQFT
+  SQM
+  SQYD
+  ACRE
+  HECTARE
+}
+
+enum Furnishing {
+  UNFURNISHED
+  SEMI_FURNISHED
+  FULLY_FURNISHED
+}
+
+enum ParkingType {
+  NONE
+  OPEN
+  COVERED
+  BOTH
+}
+
+/// How the owner wants to be reached about a listing. IN_APP means "do not
+/// surface my phone or email" — enforced by `toPublicSellerContact()` in
+/// lib/properties/public.ts, which is the only projection that can put a phone
+/// number or an address in front of a visitor. The in-app inquiry form is
+/// always offered, whatever this says, so IN_APP is never a dead end.
+enum ContactPreference {
+  PHONE
+  EMAIL
+  BOTH
+  IN_APP
+}
+
+enum InquiryStatus {
+  NEW
+  READ
+  ARCHIVED
+}
+
+/// What a piece of attached media *is*.
+///
+/// This enum is the reason the model below is `PropertyMedia` and not
+/// `PropertyImage`. A listing's media library is not one homogeneous list — a
+/// floor plan is browsed differently from a photo, and a video or a 360° tour is
+/// not rendered by an `<img>` at all. Discriminating on `kind` means adding one
+/// of those later is a new member plus a new renderer, not a second table with a
+/// duplicated ownership/ordering/storage story.
+///
+/// Only IMAGE is produced or accepted anywhere in this milestone. The other
+/// three members exist so the *shape* is settled: `lib/media/constants.ts` holds
+/// no upload policy for them, `lib/validation/media.ts` refuses them at the
+/// boundary, and the uploader offers no way to pick one. They are a documented
+/// extension point, not dormant half-features.
+enum MediaKind {
+  IMAGE
+  FLOOR_PLAN
+  VIDEO
+  TOUR_360
+}
+
+/// A platform user. Password recovery is handled by one-time passcodes
+/// delivered to the email or phone already on this record — see
+/// PasswordResetSession.
+model User {
+  id           String @id @default(auto()) @map("_id") @db.ObjectId
+  name         String
+  email        String @unique
+  phone        String @unique
+  passwordHash String
+
+  role  Role    @default(USER)
+  image String?
+
+  /// Digits-only form of `phone` ("+91 98765 43210" -> "919876543210"), kept in
+  /// sync on signup and profile update. `phone` preserves exactly what the user
+  /// typed (and owns the uniqueness constraint); this field exists so password
+  /// recovery can match a phone number the user re-types with different
+  /// spacing or punctuation. Optional because accounts created before this
+  /// field existed have no value — lookups fall back to an exact `phone` match.
+  phoneDigits String?
+
+  // Legacy security-question fields. These are NO LONGER part of password
+  // recovery (that is now OTP-based). They are kept as optional columns so
+  // existing rows are not invalidated and so a future step-up-verification
+  // feature can reuse them; nothing in the current flow reads them.
+  securityQuestionId Int?
+  securityAnswerHash String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions              Session[]
+  passwordResetSessions PasswordResetSession[]
+  properties            Property[]
+  favorites             Favorite[]
+
+  @@index([phoneDigits])
+  @@map("users")
+}
+
+/// A real, server-verified, cookie-backed session. The cookie holds only an
+/// opaque random token; the token's HASH (not the raw token) is stored here,
+/// so a database read alone can never be replayed as a valid session cookie.
+model Session {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  tokenHash String   @unique
+  userId    String   @db.ObjectId
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  userAgent String?
+  ipAddress String?
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+/// Short-lived, single-use, stage-gated session for the
+/// Forgot Password -> OTP recovery flow.
+///
+/// Nothing about the eventual password reset is ever trusted from the client
+/// except an opaque token, and that token only becomes usable for a reset once
+/// the server itself has verified a one-time passcode it generated
+/// (OTP_PENDING -> OTP_VERIFIED -> used).
+///
+/// Two things are deliberately true here:
+///
+///  1. `otpHash` is a keyed HMAC of the passcode, salted with this row's own
+///     `tokenHash` (see lib/otp/code.ts). The plaintext passcode exists only in
+///     memory during the request that generates it and in the message sent to
+///     the user. Database read access alone therefore cannot recover a passcode,
+///     and a hash cannot be replayed into a different session.
+///
+///  2. `userId` is OPTIONAL. When Forgot Password is submitted for an
+///     identifier with no matching account, a complete decoy session is still
+///     created — same shape, same TTLs, same cooldowns, same responses — with
+///     `userId: null` and a passcode that is generated but never delivered.
+///     That is what makes "no such account" indistinguishable from "wrong
+///     code" to a caller. See app/api/auth/forgot-password/start/route.ts.
+model PasswordResetSession {
+  id        String  @id @default(auto()) @map("_id") @db.ObjectId
+  tokenHash String  @unique
+  userId    String? @db.ObjectId
+  user      User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// "EMAIL" | "SMS" — which channel the passcode was sent over.
+  channel           String
+  /// Masked destination ("j••••n@example.com"), safe to echo back to the client.
+  /// The unmasked address/number is never duplicated here; it lives on User.
+  destinationMasked String
+
+  /// Keyed HMAC of the current passcode. Cleared once the passcode is verified,
+  /// so a verified session holds no passcode material at all.
+  otpHash      String?
+  otpExpiresAt DateTime?
+  /// Failed verification attempts against the CURRENT passcode. Reset when a
+  /// new passcode is issued via resend; `resendCount` is what bounds the total.
+  otpAttempts  Int       @default(0)
+  resendCount  Int       @default(0)
+  lastSentAt   DateTime
+
+  /// "OTP_PENDING" | "OTP_VERIFIED"
+  stage     String   @default("OTP_PENDING")
+  used      Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_sessions")
+}
+
+// ─────────────────────────────────────────────────────────────
+// MARKETPLACE — properties (Phase 3)
+// ─────────────────────────────────────────────────────────────
+
+/// A listing owned by exactly one user.
+///
+/// `ownerId` is the authorization anchor for the whole feature. It is written
+/// once, from `getCurrentUser()`, and is never accepted from a request body —
+/// see lib/properties/access.ts, which is the only place that resolves a
+/// property for a mutation and which every write route goes through.
+///
+/// Address is stored as flat fields rather than a MongoDB composite type so
+/// that `city` can be indexed directly for the (future) public search, and so
+/// that a partial update of one address line does not require rewriting the
+/// whole embedded document.
+model Property {
+  id      String @id @default(auto()) @map("_id") @db.ObjectId
+  ownerId String @db.ObjectId
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  title        String
+  description  String
+  propertyType PropertyType
+  listingType  ListingType
+
+  /// Stored as Double, not Int: a 32-bit Int caps out at ~₹2.1 billion, which a
+  /// commercial listing can legitimately exceed.
+  price      Float
+  negotiable Boolean @default(false)
+
+  areaValue Float
+  areaUnit  AreaUnit @default(SQFT)
+
+  /// Optional because they are meaningless for a plot or a warehouse. Validation
+  /// (lib/validation/property.ts) requires them for residential types.
+  bedrooms    Int?
+  bathrooms   Int?
+  floor       Int?
+  totalFloors Int?
+
+  furnishing       Furnishing?
+  parking          ParkingType?
+  propertyAgeYears Int?
+
+  /// Slugs from the AMENITIES allowlist in lib/properties/constants.ts. Free
+  /// text is rejected at the schema boundary so this never becomes an
+  /// unbounded, unsearchable grab bag.
+  amenities String[]
+
+  addressLine1 String
+  addressLine2 String?
+  locality     String?
+  city         String
+  state        String
+  pincode      String
+  country      String  @default("India")
+
+  /// A Google Maps share link, restricted to Google's own hosts by validation.
+  /// Latitude/longitude are kept separately so a future map view does not have
+  /// to parse the URL.
+  mapsUrl   String?
+  latitude  Float?
+  longitude Float?
+
+  contactPreference ContactPreference @default(BOTH)
+
+  status      PropertyStatus @default(DRAFT)
+  publishedAt DateTime?
+
+  verificationRequestedAt DateTime?
+  verifiedAt              DateTime?
+  /// The admin who verified this listing. A plain ObjectId rather than a
+  /// relation on purpose: it is an audit stamp, and neither cascading a
+  /// property away nor rewriting it is the right behaviour if that admin
+  /// account is ever removed.
+  verifiedById            String?   @db.ObjectId
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inquiries PropertyInquiry[]
+  media     PropertyMedia[]
+  favorites Favorite[]
+
+  // Two query shapes read this collection, and every index below serves one of
+  // them.
+  //
+  // Owner-scoped (the My Properties list, with and without a status filter):
+  @@index([ownerId, status])
+  @@index([ownerId, createdAt])
+  // Public browse/search (Phase 5). Every one of these queries constrains on
+  // `status` first — unpublished listings must never appear in it — so `status`
+  // leads each compound index, followed by whichever field that request filters
+  // or sorts on. `price` and `publishedAt` were added for the budget filter and
+  // the relevance sort respectively.
+  @@index([status, listingType])
+  @@index([status, propertyType])
+  @@index([status, city])
+  @@index([status, createdAt])
+  @@index([status, price])
+  @@index([status, publishedAt])
+  @@map("properties")
+}
+
+/// An inquiry made against a listing.
+///
+/// Rows are written by POST /api/inquiries (Phase 5), the "Contact seller" form
+/// on the public listing page, and read by the owner's inquiries view. That
+/// route accepts a property id and the enquirer's own details and nothing else:
+/// `ownerId` is copied from the property row, `fromUserId` from the session
+/// cookie, and a property that is not publicly live is refused.
+///
+/// `name` / `email` / `phone` are captured on the row rather than read through
+/// `fromUserId` because an inquiry may come from a signed-out visitor, and
+/// because the contact details the enquirer chose to share should not silently
+/// change when they later edit their profile.
+model PropertyInquiry {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  propertyId String   @db.ObjectId
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  /// Denormalised copy of `property.ownerId`, so "every inquiry across all my
+  /// listings" is one indexed query. Written from the property row on the
+  /// server, never from a request. There is no ownership-transfer feature; if
+  /// one is added, this column has to be rewritten with it.
+  ownerId String @db.ObjectId
+
+  /// Null for an inquiry from a signed-out visitor. A plain ObjectId rather
+  /// than a relation, for the same reason as Property.verifiedById.
+  fromUserId String? @db.ObjectId
+
+  name    String
+  email   String
+  phone   String?
+  message String
+
+  status    InquiryStatus @default(NEW)
+  createdAt DateTime      @default(now())
+
+  @@index([propertyId, createdAt])
+  @@index([ownerId, status])
+  @@index([fromUserId])
+  @@map("property_inquiries")
+}
+
+// ─────────────────────────────────────────────────────────────
+// MARKETPLACE — media (Phase 4)
+// ─────────────────────────────────────────────────────────────
+
+/// One photo (or, later, floor plan / video / tour) attached to a listing.
+///
+/// ── Why there is no `url` column ────────────────────────────────────────────
+///
+/// The stub this model replaces had one. A stored URL is the wrong primitive for
+/// three reasons, and all three are load-bearing here:
+///
+///  1. It leaks the storage layout. Whatever string is in the column ends up in
+///     an `<img src>`, so `/uploads/<ownerId>/<file>.jpg` publishes the directory
+///     structure, the owner's id, and a path an attacker can probe. Media is
+///     served from `/api/media/[id]` instead: the only identifier a client ever
+///     sees is this row's own ObjectId.
+///  2. It hard-codes the backend. `storageDriver` + `storageKey` is the same
+///     swap seam `lib/auth/rate-limit.ts` and `lib/otp/providers/` already use —
+///     moving to S3 changes which driver is installed, not the data.
+///  3. It cannot be access-checked. A URL that resolves without passing through
+///     application code cannot honour a DRAFT listing's privacy. The route reads
+///     this row, checks the parent listing's status, and only then streams bytes,
+///     so a draft's photos are as private as the draft.
+///
+/// ── Ordering and the cover image ────────────────────────────────────────────
+///
+/// `sortOrder` is the owner's chosen sequence and is dense (0,1,2,…) after every
+/// write — see `lib/media/order.ts`, which normalises it. `isPrimary` is kept
+/// *separate* from "sortOrder 0" on purpose: a cover photo and a gallery
+/// sequence are two different editorial decisions, and collapsing them would
+/// mean picking a new cover silently reshuffled the gallery.
+///
+/// Exactly one IMAGE per property should carry `isPrimary`. MongoDB cannot
+/// express that as a partial unique index, so it is an invariant maintained by
+/// the write path (every mutation recomputes it in one transaction) and
+/// *tolerated* by the read path (`lib/media/order.ts` picks the first by
+/// sortOrder if a row set is ever ambiguous). A rendering bug is not an
+/// acceptable outcome of a data race.
+model PropertyMedia {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  propertyId String   @db.ObjectId
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  /// Denormalised copy of `property.ownerId`, for the same reason
+  /// `PropertyInquiry.ownerId` exists: it makes "everything this owner has
+  /// uploaded" one indexed query (quota accounting, and an eventual bulk
+  /// cleanup on account deletion). Written from the property row on the server,
+  /// never from a request.
+  ownerId String @db.ObjectId
+
+  kind MediaKind @default(IMAGE)
+
+  /// Which `MediaStorage` driver holds the bytes ("local", later "s3"). Stored
+  /// per row rather than read from configuration so that flipping the installed
+  /// driver does not orphan everything uploaded under the previous one.
+  storageDriver String
+  /// Opaque, server-generated key within that driver. NEVER derived from the
+  /// client's filename (see lib/media/keys.ts) and never serialised to a client.
+  storageKey    String
+
+  /// Sniffed from the file's own magic bytes, not taken from the upload's
+  /// Content-Type header — see lib/media/image.ts.
+  mimeType String
+  byteSize Int
+
+  /// Intrinsic pixel dimensions. Non-null for every row this app writes: an
+  /// image whose header could not be parsed is rejected rather than stored, so
+  /// these double as proof the bytes really are the format they claim. Optional
+  /// in the schema because a future VIDEO/TOUR_360 row legitimately has none.
+  width  Int?
+  height Int?
+
+  /// SHA-256 of the bytes. Used to make re-uploading the same photo to the same
+  /// listing a no-op instead of a duplicate tile.
+  checksum String
+
+  /// Owner-supplied alternative text. Null means "none provided", and the
+  /// renderers fall back to a caption derived from the listing — never to the
+  /// original filename, which is client-controlled text.
+  alt String?
+
+  sortOrder Int     @default(0)
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // The gallery read: one property, one kind, in the owner's order.
+  @@index([propertyId, kind, sortOrder])
+  // De-duplication on upload, and the owner-wide accounting described above.
+  @@index([propertyId, checksum])
+  @@index([ownerId])
+  @@map("property_media")
+}
+
+// ─────────────────────────────────────────────────────────────
+// MARKETPLACE — discovery (Phase 5)
+// ─────────────────────────────────────────────────────────────
+
+/// One user has saved one listing.
+///
+/// A join row rather than a `String[]` of property ids on User, for three
+/// reasons that all matter at the boundary:
+///
+///  1. `@@unique([userId, propertyId])` makes double-saving a database-level
+///     impossibility, so the API route does not have to read-then-write (and
+///     cannot lose that race). "Save" is an upsert and "unsave" a deleteMany,
+///     both idempotent.
+///  2. It is queryable from either side. The saved-listings filter on /explore
+///     reads `userId` (indexed, newest first) and a card's filled/hollow heart
+///     comes from one `findMany` over the page's ids — neither needs to load
+///     the other side's document.
+///  3. Deleting a property or an account takes its saves with it via
+///     `onDelete: Cascade`, instead of leaving dangling ids in an array that
+///     every read would then have to filter.
+///
+/// Saving is gated on the listing being publicly live at the moment of the
+/// write (see app/api/favorites/route.ts). Without that check a signed-in user
+/// could POST arbitrary ObjectIds and use the 200/404 split to discover which
+/// drafts exist. Rows already saved for a listing the seller later unpublishes
+/// are simply not returned by the browse query, which filters on status too.
+model Favorite {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  userId String @db.ObjectId
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  propertyId String   @db.ObjectId
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, propertyId])
+  // "My saved listings", most recently saved first.
+  @@index([userId, createdAt])
+  // The reverse lookup, for an eventual "N people saved this".
+  @@index([propertyId])
+  @@map("favorites")
+}
+
+// ─────────────────────────────────────────────────────────────
+// FUTURE MODELS (not implemented in this milestone)
+// Left as documentation of the intended schema shape so later phases
+// extend rather than restructure the data model.
+// ─────────────────────────────────────────────────────────────
+//
+// model Message {
+//   id         String   @id @default(auto()) @map("_id") @db.ObjectId
+//   fromUserId String   @db.ObjectId
+//   toUserId   String   @db.ObjectId
+//   body       String
+//   createdAt  DateTime @default(now())
+// }
+//
+// model Notification {
+//   id        String   @id @default(auto()) @map("_id") @db.ObjectId
+//   userId    String   @db.ObjectId
+//   message   String
+//   read      Boolean  @default(false)
+//   createdAt DateTime @default(now())
+// }
+//
+// model SavedSearch {
+//   id        String   @id @default(auto()) @map("_id") @db.ObjectId
+//   userId    String   @db.ObjectId
+//   query     Json
+//   createdAt DateTime @default(now())
+// }
+//
+// The agreement-requirements filter asked for by the browse spec is NOT
+// implemented, because there is nothing on Property for it to filter on: the
+// clauses a seller is willing to accept (registered agreement, notice period,
+// lock-in, pet/bachelor/non-veg policy, deposit terms) are seller-declared
+// facts about a listing, not a property of an executed Agreement. Filtering
+// live listings by them needs a `Property.agreementClauses String[]` — the same
+// allowlisted-slug shape as `amenities` — plus a section in the seller form
+// that populates it. A filter over an empty column would silently return zero
+// results for every option, which is worse than not offering it. The model
+// below stays as the eventual home for a *signed* agreement between parties.
+//
+// model Agreement {
+//   id         String   @id @default(auto()) @map("_id") @db.ObjectId
+//   propertyId String   @db.ObjectId
+//   partyIds   String[] @db.ObjectId
+//   status     String
+//   createdAt  DateTime @default(now())
+// }
+//
+// model AgentProfile {
+//   id       String @id @default(auto()) @map("_id") @db.ObjectId
+//   userId   String @unique @db.ObjectId
+//   agency   String?
+//   license  String?
+// }
