@@ -8,7 +8,8 @@ import { ListingCard } from "@/components/marketplace/ListingCard";
 import { ListingFilters } from "@/components/marketplace/ListingFilters";
 import { Pagination } from "@/components/marketplace/Pagination";
 import { groupIndian } from "@/lib/properties/format";
-import { hasActiveFilters, type BrowseQuery, type BrowseResult } from "@/lib/properties/public";
+import { hasActiveFilters, type BrowseQuery } from "@/lib/properties/browse-query";
+import type { BrowseResult } from "@/lib/properties/public";
 
 /**
  * The body of `/buy` and `/rent`.
@@ -121,7 +122,7 @@ export function BrowseView({
   query: BrowseQuery;
   result: BrowseResult;
 }) {
-  const copy = COPY[query.listingType];
+  const copy = query.intent ? COPY[query.intent] : COPY.BUY;
   const isFiltered = hasActiveFilters(query);
 
   return (

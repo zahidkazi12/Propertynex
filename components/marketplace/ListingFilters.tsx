@@ -6,16 +6,16 @@ import { useRouter } from "next/navigation";
 import { Loader2, SlidersHorizontal, X } from "lucide-react";
 import { SelectField, type SelectGroup } from "@/components/ui/SelectField";
 import {
+  BEDROOM_STEPS,
   PROPERTY_TYPE_GROUPS,
   PROPERTY_TYPE_LABELS,
 } from "@/lib/properties/constants";
 import {
-  BEDROOM_STEPS,
   BROWSE_SORTS,
   BROWSE_SORT_LABELS,
   hasActiveFilters,
   type BrowseQuery,
-} from "@/lib/properties/public";
+} from "@/lib/properties/browse-query";
 
 /**
  * The filter bar for `/buy` and `/rent`.

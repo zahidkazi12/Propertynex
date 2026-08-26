@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Building2, Key, LayoutGrid, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils/cn";
-import { browseQueryString, type BrowseQuery } from "@/lib/properties/public";
+import { browseQueryString, type BrowseQuery } from "@/lib/properties/browse-query";
 
 /**
  * All ⇄ Buy ⇄ Rent, as three links rather than a toggle.

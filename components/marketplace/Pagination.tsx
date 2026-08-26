@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
-import { browseQueryString, type BrowseQuery } from "@/lib/properties/public";
+import { browseQueryString, type BrowseQuery } from "@/lib/properties/browse-query";
 
 /**
  * Previous / next plus a window of page numbers.

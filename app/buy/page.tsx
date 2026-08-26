@@ -31,7 +31,7 @@ export default async function BuyPage({
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  const query = parseBrowseQuery("BUY", await searchParams);
+  const query = parseBrowseQuery(await searchParams, { lockedIntent: "BUY" });
   const result = await browsePublicListings(query);
 
   return (

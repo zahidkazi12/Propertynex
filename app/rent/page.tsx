@@ -20,7 +20,7 @@ export default async function RentPage({
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  const query = parseBrowseQuery("RENT", await searchParams);
+  const query = parseBrowseQuery(await searchParams, { lockedIntent: "RENT" });
   const result = await browsePublicListings(query);
 
   return (
