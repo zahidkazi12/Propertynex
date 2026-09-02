@@ -11,29 +11,19 @@
  *
  * Both produce `not_found` (HTTP 404), never `403`. A 403 on someone else's
  * listing confirms that the id exists, which turns the id space into an
- * existence oracle: an attacker walking ObjectIds could enumerate how many
+ * existence oracle: an attacker walking ids could enumerate how many
  * listings the platform holds and which ids are real, without ever being
  * authorized for one. Returning 404 for "not yours" leaks nothing — from the
  * caller's side an id they may not touch is indistinguishable from an id that
  * was never issued.
  *
+ * The same reasoning is why a *malformed* id is answered the same way; the shape
+ * check itself lives in `lib/utils/record-id.ts`.
+ *
  * The one case that *is* 403 is `not_authenticated` → handled before this
  * function, by the route's session check.
  */
 import type { Role } from "@prisma/client";
-
-/** MongoDB ObjectIds are 24 hex characters. */
-const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
-
-/**
- * Prisma's MongoDB connector *throws* on a malformed ObjectId rather than
- * returning null, so a route that passed a path segment straight through would
- * turn `/api/properties/nope` into a 500. Every route validates the shape first
- * and treats a malformed id as "no such property".
- */
-export function isValidObjectId(value: string): boolean {
-  return OBJECT_ID_PATTERN.test(value);
-}
 
 export function isAdminRole(role: Role | string): boolean {
   return role === "ADMIN";

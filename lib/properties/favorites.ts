@@ -1,8 +1,8 @@
 import "server-only";
 
 import { prisma } from "@/lib/db/prisma";
-import { isValidObjectId } from "@/lib/properties/ownership";
 import { LIVE_STATUSES } from "@/lib/properties/status";
+import { isValidRecordId } from "@/lib/utils/record-id";
 
 /**
  * Saved listings.
@@ -11,7 +11,7 @@ import { LIVE_STATUSES } from "@/lib/properties/status";
  *
  * A user may only save a listing that is *publicly live at the moment of the
  * write*. Without that check, `POST /api/favorites` is an existence oracle: a
- * signed-in attacker posts ObjectIds and reads the 200/404 split to learn which
+ * signed-in attacker posts ids and reads the 200/404 split to learn which
  * drafts exist, and then which of them belong to a competitor. Every other
  * public read path already refuses non-live rows; this is the write path that
  * has to refuse them too, and it does it in the same `where` as the insert
@@ -34,7 +34,7 @@ import { LIVE_STATUSES } from "@/lib/properties/status";
 
 /** Save a listing. Returns false when the property is not one a user may save. */
 export async function addFavorite(userId: string, propertyId: string): Promise<boolean> {
-  if (!isValidObjectId(propertyId)) return false;
+  if (!isValidRecordId(propertyId)) return false;
 
   // The status check and the write are one statement. A `findUnique` followed by
   // a `create` would leave a window in which a listing is unpublished between
@@ -62,7 +62,7 @@ export async function addFavorite(userId: string, propertyId: string): Promise<b
  * that is the one case where they would most want to.
  */
 export async function removeFavorite(userId: string, propertyId: string): Promise<void> {
-  if (!isValidObjectId(propertyId)) return;
+  if (!isValidRecordId(propertyId)) return;
   await prisma.favorite.deleteMany({ where: { userId, propertyId } });
 }
 

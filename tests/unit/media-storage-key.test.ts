@@ -23,7 +23,7 @@ import { IMAGE_MIME_TYPES } from "../../lib/media/constants";
  * is the only way to notice if one of them quietly stops doing anything.
  */
 
-const PROPERTY_ID = "64b7c0f1a2d3e4f5a6b7c8d9";
+const PROPERTY_ID = "c64b7c0f1a2d3e4f5a6b7c8d9";
 /** An absolute root that exists on neither platform, so nothing here can touch a
  *  real file even if a resolution went wrong. */
 const ROOT = path.resolve(path.sep === "\\" ? "C:\\propertynex-test-root" : "/propertynex-test-root");

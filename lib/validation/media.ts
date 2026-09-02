@@ -5,6 +5,7 @@ import {
   UPLOADABLE_KINDS,
   isUploadableKind,
 } from "@/lib/media/constants";
+import { RECORD_ID_PATTERN } from "@/lib/utils/record-id";
 
 /**
  * Server-side validation for media writes — the trust boundary for this feature.
@@ -33,13 +34,13 @@ import {
 /**
  * A media id in a request body.
  *
- * Shape-checked here so a hostile payload never reaches Prisma's Mongo connector,
- * which throws on a malformed ObjectId (`lib/properties/ownership.ts` explains the
- * 500-instead-of-404 that causes). Ids that are well-formed but belong to another
+ * Shape-checked here so a hostile payload never reaches the database at all —
+ * `lib/utils/record-id.ts` owns the pattern and explains why it is a pre-filter
+ * that preserves the 404. Ids that are well-formed but belong to another
  * listing are handled a step later, by `lib/media/order.ts`, which ignores any id
  * that is not in the row set it was given.
  */
-const mediaId = z.string().regex(/^[0-9a-fA-F]{24}$/, "That photo could not be found.");
+const mediaId = z.string().regex(RECORD_ID_PATTERN, "That photo could not be found.");
 
 /**
  * Owner-supplied alternative text.

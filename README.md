@@ -3,7 +3,7 @@
 **Find. Invest. Belong..**
 
 A modern real-estate marketplace foundation — Next.js 16 (App Router) + TypeScript + Tailwind
-CSS + MongoDB (via Prisma). This milestone ships the public marketing site, a real
+CSS + PostgreSQL (via Prisma). This milestone ships the public marketing site, a real
 session-based authentication system, and an **OTP-based password recovery flow** — a one-time
 passcode sent to the email address or mobile number on the account.
 
@@ -17,7 +17,7 @@ passcode sent to the email address or mobile number on the account.
 | Language       | TypeScript (strict mode)                             |
 | Styling        | Tailwind CSS + custom glassmorphism utility classes  |
 | Animation      | Framer Motion                                        |
-| Database       | MongoDB                                               |
+| Database       | PostgreSQL (Vercel Postgres / Neon)                   |
 | ORM            | Prisma                                                |
 | Auth           | Custom, cookie + server-verified session (no NextAuth) |
 | Validation     | Zod (client + server)                                |
@@ -59,7 +59,10 @@ cp .env.example .env.local
 
 Fill in:
 
-- `DATABASE_URL` — your MongoDB connection string
+- `POSTGRES_PRISMA_URL` — your PostgreSQL connection string (pooled). This is the name Vercel
+  Postgres creates automatically, and it is what `prisma/schema.prisma` reads for `url`.
+- `POSTGRES_URL_NON_POOLING` — the direct (unpooled) connection to the same database, used for
+  `directUrl`. Prisma needs it for schema pushes, which a connection pooler cannot serve.
 - `AUTH_SECRET` — a strong random string, e.g. `openssl rand -base64 32`
 - `PASSWORD_RESET_SECRET` — a **different** strong random string
 - `OTP_SECRET` — a **third, distinct** strong random string (min 16 chars), used to key the
@@ -68,7 +71,7 @@ Fill in:
   tokens *and* every live passcode digest at once. The app refuses to issue or verify a passcode
   without it, and the resulting error never echoes any secret's value.
 
-All three live only in `.env` / `.env.local`, which are gitignored — never commit them.
+All of these live only in `.env` / `.env.local`, which are gitignored — never commit them.
 
 Passcode delivery also needs a provider per channel. In development both default to `console`,
 which prints the passcode to the server console — that is enough to exercise the whole flow
@@ -76,8 +79,8 @@ locally, and the console provider **refuses to run with `NODE_ENV=production`**.
 deployment set `OTP_EMAIL_PROVIDER=resend` / `OTP_SMS_PROVIDER=twilio` and their credentials;
 see `.env.example` for the full list.
 
-Then push the schema to your database (MongoDB has no formal migration files — `db push`
-syncs the Prisma schema directly):
+Then push the schema to your database (`db push` syncs the Prisma schema directly, without
+generating migration files):
 
 ```bash
 npx prisma db push
@@ -102,7 +105,8 @@ node --test "tests/.build/tests/unit/*.test.js"
 ```
 
 Integration tests drive the real recovery flow over HTTP. They need a running dev server and a
-reachable MongoDB, and they read delivered passcodes out of the dev server's own console output
+reachable PostgreSQL database, and they read delivered passcodes out of the dev server's own console
+output
 — the passcode is never returned over HTTP, so the delivery channel is the only way to obtain
 it, which is precisely the property under test. Start the server with its output captured, then
 point the suite at both:
@@ -145,20 +149,35 @@ Note that `next build` runs `prisma generate`, which cannot replace the query-en
 a dev or production server is holding it — stop any running server first, or the build fails with
 `EPERM ... query_engine-windows.dll.node`.
 
-### 2.5 Running MongoDB locally as a single-node replica set
+### 2.5 Running PostgreSQL locally
+
+Any PostgreSQL 14+ instance works. With Docker:
 
 ```bash
-mkdir -p ~/mongodb-data
-mongod --replSet rs0 --dbpath ~/mongodb-data --port 27017 &
-mongosh --eval "rs.initiate()"
+docker run --name propertynex-db -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=propertynex -p 5432:5432 -d postgres:16
 ```
 
-Then use `DATABASE_URL="mongodb://localhost:27017/propertynex?replicaSet=rs0"`.
+Then point both connection variables at it — locally there is no pooler, so they are the same
+string:
+
+```bash
+POSTGRES_PRISMA_URL="postgresql://postgres:postgres@localhost:5432/propertynex"
+POSTGRES_URL_NON_POOLING="postgresql://postgres:postgres@localhost:5432/propertynex"
+```
+
+On Vercel Postgres / Neon both variables are created for you, and they are *not* the same string:
+the pooled one goes to the connection pooler and the non-pooling one bypasses it. `directUrl` in
+`prisma/schema.prisma` needs the second, because a pooler cannot serve a schema push.
+
+`GET /api/health` reports which of these variables the running server can see and whether a
+trivial query succeeds — the fastest way to tell a missing variable from an unreachable database.
 
 ### 2.6 Build and check status
 
 Unlike the original foundation drop (assembled without outbound network access, so nothing
-could be executed), the OTP milestone was built and checked against a real MongoDB. As of this
+could be executed), the OTP milestone was built and checked against a real MongoDB — the store
+at that time; the schema has since been migrated to PostgreSQL (§2.5). As of that
 change, on Node 24 / Next 16.3.1 / Prisma 6.19.3:
 
 | Check | Command | Result |
@@ -186,9 +205,11 @@ linting had been failing to run at all rather than reporting a clean result.
 ```
 app/
   page.tsx                     Landing page
+  explore/page.tsx             Public browse — both intents, and the ?saved=1 view
   buy/page.tsx                 Public browse — listings with listingType BUY
   rent/page.tsx                Public browse — listings with listingType RENT
   sell/page.tsx                Owner-facing explainer + signup CTAs
+  property/[id]/page.tsx       One live listing: gallery, facts, seller, enquiry form
   not-found.tsx
   login/page.tsx
   signup/page.tsx
@@ -197,6 +218,10 @@ app/
     layout.tsx                 Server-side session gate (defense in depth)
     page.tsx                   Overview + development progress
     profile/page.tsx
+    properties/page.tsx        Owner's listings
+    properties/new/page.tsx    Create a listing
+    properties/[id]/edit/page.tsx    Edit + status transitions
+    properties/[id]/photos/page.tsx  Photo manager (upload, reorder, cover, delete)
   api/
     auth/
       signup/route.ts
@@ -209,25 +234,37 @@ app/
         resend/route.ts        Re-send a passcode (cooldown + resend cap)
         reset/route.ts         Step 3 — reset password, only if stage === OTP_VERIFIED
     profile/route.ts
+    health/route.ts            Env-var presence + a trivial query, for diagnosing a deploy
+    favorites/route.ts         Save / unsave a live listing
+    inquiries/route.ts         Contact a seller (open to signed-out visitors, rate limited)
+    media/[id]/route.ts        Serves bytes through an access check — never a storage path
     properties/
       route.ts                 Owner-scoped list + create
       [id]/route.ts            Owner-scoped read, update, delete
       [id]/status/route.ts     Status transitions (publish, unpublish, submit)
+      [id]/media/route.ts      Upload + list a listing's photos
+      [id]/media/[mediaId]/route.ts  Per-photo update (alt) and delete
 components/
   layout/      Navbar, Footer, Logo, PageShell, background effects
   landing/     Hero, intent actions, feature sections, development progress panel
-  marketplace/ BrowseView, ListingCard, ListingFilters, IntentSwitch, Pagination
+  marketplace/ BrowseView, ListingCard, ListingFilters, IntentSwitch, Pagination,
+               FavoriteButton, InquiryForm
+  media/       ImageUploader, PropertyGallery
   auth/        Forms, shared field components, OTP input, resend control, recovery flow
-  dashboard/   Sidebar, topbar, profile form, stat cards
-  ui/          Small shared primitives (Alert, SelectField, Reveal)
+  dashboard/   Sidebar, topbar, profile form, property form, status panel, stat cards
+  ui/          Small shared primitives (Alert, SelectField, TextAreaField, Reveal)
 lib/
   auth/        session.ts, password-reset-session.ts, password.ts,
                security-questions.ts (legacy, unused), rate-limit.ts
   otp/         config.ts, code.ts, send.ts, providers/
+  media/       constants.ts, image.ts (magic-byte sniffing), keys.ts (storage keys),
+               order.ts, read.ts, serialize.ts, storage/ (pluggable driver)
   properties/  constants.ts (labels), format.ts (price/area/date display),
                access.ts, ownership.ts, status.ts, serialize.ts (owner-scoped),
-               public.ts (read-only public browse — see §7.6)
-  utils/       identifier.ts, timing.ts, api-response.ts, cn.ts
+               favorites.ts, browse-query.ts, browse-where.ts,
+               public.ts (read-only public browse + detail — see §7.6)
+  utils/       identifier.ts, record-id.ts (the one id shape), timing.ts,
+               api-response.ts, cn.ts
   validation/  Zod schemas
   db/          Prisma client singleton
 types/
@@ -235,7 +272,7 @@ types/
 prisma/
   schema.prisma
 tests/
-  unit/        Passcode crypto, identifier parsing, provider guards (node:test)
+  unit/        Passcode crypto, identifier parsing, provider guards, media (node:test)
   integration/ Full HTTP recovery flow against a running dev server
 middleware.ts                  Edge-layer route protection (paired with server-side checks)
 ```
@@ -402,20 +439,35 @@ internal error details are logged server-side only, never sent to the client.
 - Owner-scoped REST API: list, create, read, update, delete, and status transitions
 - Zod validation per property type, ownership checks on every mutation
 - Display helpers for Indian price grouping, area, configuration, floor and age
+- Owner dashboard UI for all of it: `My Properties`, the create/edit form, the status panel, and
+  a photo manager with upload, reorder, cover selection and delete
 
-**Public marketplace (this milestone):**
+**Public marketplace:**
 - Navbar and footer links are live: `/`, `/buy`, `/sell`, `/rent`, `/#about`
 - Buy / Sell / Rent intent cards on the homepage
-- `/buy` and `/rent` browse live listings with search, property type, price range,
-  bedrooms, sort and pagination — all held in the URL, so any result set is shareable
+- `/explore`, `/buy` and `/rent` browse live listings with search, property type, price range,
+  bedrooms, sort and pagination — all held in the URL, so any result set is shareable.
+  `/explore` is the one browse route with no locked intent, so it shows both and is where
+  `?saved=1` (saved listings only) belongs
 - `/sell` explains the owner side and routes to signup / dashboard
 - Listings are read through a dedicated public projection that omits the exact address,
   coordinates and every contact field (§7.6)
+- Saving a listing: an optimistic heart on every card and on the detail page, backed by
+  `POST/DELETE /api/favorites`
+
+**Listing detail and enquiries (this milestone):**
+- `/property/[id]` — gallery, full facts, description, grouped amenities, seller panel and
+  similar listings in the same city. A draft id, a malformed id and an unknown id are all the
+  same 404, so the URL is not an existence oracle for unpublished listings
+- Seller contact on the detail page is gated by the listing's `contactPreference`: `IN_APP`
+  surfaces no phone or email and offers the form instead
+- In-app enquiries — `POST /api/inquiries`, open to signed-out visitors, rate limited per caller
+  and per listing
 
 **Still to build:**
-- Owner-facing listing form (`My Properties` in the dashboard sidebar is still disabled)
-- Individual listing detail pages, so `/buy` cards can link somewhere
-- Inquiry submission UI (the model exists; nothing writes to it yet)
+- Owner-facing inbox for received enquiries (`PropertyInquiry` rows are written; nothing reads them)
+- A dashboard `Favorites` screen — the sidebar item is still disabled; saved listings are reachable
+  today only through `/explore?saved=1`
 - Agent directory, map search, messaging, notifications
 - Admin panel (verification is a real status but has no reviewer UI), payments
 
@@ -446,7 +498,23 @@ internal error details are logged server-side only, never sent to the client.
 - [ ] Switch Buy → Rent with filters applied → filters carry over, page resets to 1
 - [ ] With no published listings, `/buy` and `/rent` say nothing is listed yet and offer `/sell` —
       not "no results match your filters"
-- [ ] Stop MongoDB and reload `/buy` → "Listings are temporarily unavailable", not a 500
+- [ ] Stop PostgreSQL (or point it at a dead host) and reload `/buy` → "Listings are temporarily
+      unavailable", not a 500. `GET /api/health` should report `connected: false`
+- [ ] Click a listing's title on `/buy` → its `/property/[id]` page opens, with gallery, facts,
+      description, amenities and seller panel
+- [ ] On a listing whose contact preference is in-app only → no phone or email is shown, and the
+      enquiry form is still offered
+- [ ] Send an enquiry → confirmation replaces the form; send a fourth for the same listing →
+      "You've already contacted this seller"
+- [ ] Open `/property/<id of a draft>` and `/property/nonsense` → both the same 404 page
+- [ ] `/explore` shows both sale and rental listings, the All pill is lit, and its heading does not
+      say "buy"
+- [ ] Signed in, click a heart on `/buy` → reload → it is still filled; then `/explore?saved=1`
+      lists exactly what you saved
+- [ ] Signed out, click a heart → `/login?redirectTo=…` → after logging in you land back on the
+      same filtered page
+- [ ] Upload a photo to a listing from the dashboard photo manager → it appears on the card and on
+      the detail page, cover first
 - [ ] Resize every page from 320px to 1920px — no horizontal scroll, no overlapping elements;
       check the six passcode boxes stay on one line at 320px
 

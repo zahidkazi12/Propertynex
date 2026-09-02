@@ -32,8 +32,8 @@ import { IMAGE_MIME_EXTENSIONS, IMAGE_MIME_TYPES } from "../../lib/media/constan
  * to have generated it.
  */
 
-const PROPERTY_ID = "64b7c0f1a2d3e4f5a6b7c8d9";
-const OTHER_PROPERTY_ID = "0123456789abcdef01234567";
+const PROPERTY_ID = "c64b7c0f1a2d3e4f5a6b7c8d9";
+const OTHER_PROPERTY_ID = "c0123456789abcdef01234567";
 
 test("a storage key cannot be derived from a filename: there is no parameter for one", () => {
   // Arity, asserted deliberately. The client's filename is not sanitised here —
@@ -43,7 +43,7 @@ test("a storage key cannot be derived from a filename: there is no parameter for
 
 test("a key is prefix, property id, random material and extension — and nothing else", () => {
   const key = buildStorageKey(PROPERTY_ID, "image/jpeg");
-  assert.match(key, /^properties\/[0-9a-f]{24}\/[0-9a-f]{32}\.jpg$/);
+  assert.match(key, /^properties\/c[a-z0-9]{24}\/[0-9a-f]{32}\.jpg$/);
   assert.equal(key.split("/")[0], STORAGE_KEY_PREFIX);
   assert.equal(key.split("/")[1], PROPERTY_ID);
   assert.ok(isSafeStorageKey(key));
@@ -75,26 +75,30 @@ test("two properties never share a key namespace", () => {
   assert.notEqual(storageKeyPropertyId(mine), storageKeyPropertyId(theirs));
 });
 
-test("a property id that is not a canonical ObjectId is refused outright", () => {
+test("a property id that is not a canonical CUID is refused outright", () => {
   // The tripwire described in the module: callers take this from a row they have
   // already loaded and authorised. One that took it from the URL instead would
   // fail here rather than write a key with a path segment in it.
   const bad = [
     "",
     "../../etc",
-    "64b7c0f1a2d3e4f5a6b7c8d",
-    "64b7c0f1a2d3e4f5a6b7c8d99",
-    "64B7C0F1A2D3E4F5A6B7C8D9",
-    "64b7c0f1a2d3e4f5a6b7c8d/",
-    "64b7c0f1a2d3e4f5a6b7c8dz",
-    "64b7c0f1a2d3e4f5a6b7c8d9\0",
-    "64b7c0f1a2d3e4f5a6b7c8d9/../../../etc/passwd",
+    // A bare 24-hex MongoDB ObjectId. Keys in this shape are still *readable*
+    // (see `isSafeStorageKey` below — pre-migration rows point at them), but the
+    // database no longer issues ids like this, so writing a new one is a bug.
+    "64b7c0f1a2d3e4f5a6b7c8d9",
+    "c64b7c0f1a2d3e4f5a6b7c8d",
+    "c64b7c0f1a2d3e4f5a6b7c8d99",
+    "C64B7C0F1A2D3E4F5A6B7C8D9",
+    "c64b7c0f1a2d3e4f5a6b7c8d/",
+    "c64b7c0f1a2d3e4f5a6b7c8d-",
+    "c64b7c0f1a2d3e4f5a6b7c8d9\0",
+    "c64b7c0f1a2d3e4f5a6b7c8d9/../../../etc/passwd",
   ];
 
   for (const propertyId of bad) {
     assert.throws(
       () => buildStorageKey(propertyId, "image/png"),
-      /ObjectId/,
+      /CUID/,
       `accepted ${JSON.stringify(propertyId)}`
     );
   }
@@ -105,6 +109,20 @@ test("isSafeStorageKey accepts exactly what this module produces", () => {
   for (const extension of Object.values(IMAGE_MIME_EXTENSIONS)) {
     assert.ok(isSafeStorageKey(`${STORAGE_KEY_PREFIX}/${PROPERTY_ID}/${random}${extension}`));
   }
+});
+
+test("isSafeStorageKey still accepts pre-migration ObjectId keys", () => {
+  // Read validation is deliberately wider than write validation. Ids used to be
+  // MongoDB ObjectIds, and `isSafeStorageKey` is consulted before *every* read and
+  // delete — so narrowing it to CUIDs would not retire those keys, it would make
+  // the files they point at unreachable while their rows still referenced them.
+  const legacy = `${STORAGE_KEY_PREFIX}/64b7c0f1a2d3e4f5a6b7c8d9/${"c".repeat(32)}.jpg`;
+  assert.ok(isSafeStorageKey(legacy));
+  assert.equal(storageKeyPropertyId(legacy), "64b7c0f1a2d3e4f5a6b7c8d9");
+
+  // Widening the property segment must not have widened anything else.
+  assert.ok(!isSafeStorageKey(`${STORAGE_KEY_PREFIX}/64b7c0f1a2d3e4f5a6b7c8d9/../x.jpg`));
+  assert.ok(!isSafeStorageKey(`${STORAGE_KEY_PREFIX}/64B7C0F1A2D3E4F5A6B7C8D9/${"c".repeat(32)}.jpg`));
 });
 
 test("isSafeStorageKey refuses anything that could escape the storage root", () => {

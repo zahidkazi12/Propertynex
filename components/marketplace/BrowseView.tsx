@@ -8,15 +8,16 @@ import { ListingCard } from "@/components/marketplace/ListingCard";
 import { ListingFilters } from "@/components/marketplace/ListingFilters";
 import { Pagination } from "@/components/marketplace/Pagination";
 import { groupIndian } from "@/lib/properties/format";
-import { hasActiveFilters, type BrowseQuery } from "@/lib/properties/browse-query";
+import { browseQueryString, hasActiveFilters, type BrowseQuery } from "@/lib/properties/browse-query";
 import type { BrowseResult } from "@/lib/properties/public";
 
 /**
- * The body of `/buy` and `/rent`.
+ * The body of `/explore`, `/buy` and `/rent`.
  *
- * One component for both, because the two pages differ only in copy and in the
- * `listingType` they query. Two near-identical page files would drift the first
- * time a filter or an empty state changed on one of them.
+ * One component for all three, because they differ only in copy and in the
+ * `listingType` they query — `/explore` is the case where that type is *both*.
+ * Three near-identical page files would drift the first time a filter or an empty
+ * state changed on one of them.
  *
  * ── The three empty states, and why they are three ──────────────────────────
  *
@@ -31,6 +32,9 @@ import type { BrowseResult } from "@/lib/properties/public";
  *      rather than filler cards standing in for inventory that does not exist.
  */
 
+/** `ALL` is `/explore`: no intent filter, so the copy cannot name one. */
+type IntentKey = ListingType | "ALL";
+
 type IntentCopy = {
   readonly eyebrow: string;
   readonly headingLead: string;
@@ -42,7 +46,17 @@ type IntentCopy = {
   readonly emptyBody: string;
 };
 
-const COPY: Record<ListingType, IntentCopy> = {
+const COPY: Record<IntentKey, IntentCopy> = {
+  ALL: {
+    eyebrow: "Every live listing",
+    headingLead: "Find a place to",
+    headingAccent: "call yours",
+    sub: "Everything currently listed on PROPERTYNEX, for sale and to rent. Narrow it by intent, city, budget, property type and configuration.",
+    noun: ["property", "properties"],
+    emptyTitle: "Nothing is listed yet",
+    emptyBody:
+      "This page shows real listings, so it stays empty until owners publish them. Nothing is being held back — there is simply nothing on PROPERTYNEX right now.",
+  },
   BUY: {
     eyebrow: "Properties for sale",
     headingLead: "Find a place to",
@@ -117,13 +131,21 @@ export function BrowseView({
   basePath,
   query,
   result,
+  signedIn = false,
 }: {
   basePath: string;
   query: BrowseQuery;
   result: BrowseResult;
+  /** Decides whether a heart saves or sends the visitor to log in. */
+  signedIn?: boolean;
 }) {
-  const copy = query.intent ? COPY[query.intent] : COPY.BUY;
+  const copy = COPY[query.intent ?? "ALL"];
   const isFiltered = hasActiveFilters(query);
+
+  // Where the login link on a heart should return to: this page *with* its
+  // filters, so a visitor who signs in to save something lands back on the result
+  // set they were reading rather than at an unfiltered grid.
+  const redirectTo = `${basePath}${browseQueryString(query)}`;
 
   return (
     <>
@@ -170,16 +192,17 @@ export function BrowseView({
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
                   {resultSummary(result, copy)}
                 </h2>
-                {/* Stated once here rather than as a chip on every card. */}
-                <p className="text-xs text-slate-500">
-                  Individual listing pages are on the way — for now each card opens
-                  its full details in place.
-                </p>
               </div>
 
               <div className="mt-6 grid gap-5 sm:grid-cols-2 sm:gap-6 xl:grid-cols-3">
                 {result.listings.map((listing) => (
-                  <ListingCard key={listing.id} listing={listing} />
+                  <ListingCard
+                    key={listing.id}
+                    listing={listing}
+                    saved={result.savedIds.has(listing.id)}
+                    signedIn={signedIn}
+                    redirectTo={redirectTo}
+                  />
                 ))}
               </div>
 

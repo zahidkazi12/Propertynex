@@ -3,7 +3,8 @@ import type { Property, User } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { jsonError } from "@/lib/utils/api-response";
 import { getCurrentUser } from "@/lib/auth/session";
-import { decidePropertyAccess, isValidObjectId, type PropertyActor } from "@/lib/properties/ownership";
+import { decidePropertyAccess, type PropertyActor } from "@/lib/properties/ownership";
+import { isValidRecordId } from "@/lib/utils/record-id";
 
 /**
  * The single gate every property route passes through.
@@ -61,7 +62,7 @@ export async function requireOwnedProperty(rawId: string): Promise<PropertyGuard
   const session = await requireSession();
   if (!session.ok) return session;
 
-  if (!isValidObjectId(rawId)) {
+  if (!isValidRecordId(rawId)) {
     return { ok: false, response: jsonError(NOT_FOUND_MESSAGE, 404) };
   }
 
@@ -84,7 +85,7 @@ export async function findAccessibleProperty(
   rawId: string,
   actor: PropertyActor
 ): Promise<Property | null> {
-  if (!isValidObjectId(rawId)) return null;
+  if (!isValidRecordId(rawId)) return null;
 
   const property = await prisma.property.findUnique({ where: { id: rawId } });
   const decision = decidePropertyAccess(property, actor);

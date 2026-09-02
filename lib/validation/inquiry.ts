@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { RECORD_ID_PATTERN } from "@/lib/utils/record-id";
+
 /**
  * `POST /api/inquiries` — a visitor contacting a seller about one listing.
  *
@@ -60,8 +62,8 @@ function cleanString(max: number, tooLong: string) {
 export const MAX_INQUIRY_MESSAGE_LENGTH = 1_000;
 
 export const inquirySchema = z.object({
-  /** Shape-checked before Prisma's Mongo connector can throw on it. */
-  propertyId: z.string().regex(/^[0-9a-fA-F]{24}$/, "That property could not be found."),
+  /** Shape-checked before the id reaches the database — see lib/utils/record-id.ts. */
+  propertyId: z.string().regex(RECORD_ID_PATTERN, "That property could not be found."),
 
   name: cleanString(80, "Keep your name under 80 characters.").pipe(
     z.string().min(2, "Please enter your name.")

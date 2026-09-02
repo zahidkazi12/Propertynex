@@ -52,13 +52,13 @@ import type { Property, PropertyMedia, User } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import { toPublicGallery } from "@/lib/media/serialize";
+import { isValidRecordId } from "@/lib/utils/record-id";
 import type { PublicListing, PublicListingDetail, PublicSeller, PublicSellerContact } from "@/types";
 
 import { BROWSE_PER_PAGE, type BrowseQuery } from "./browse-query";
 import { browseOrderBy, buildBrowseWhere } from "./browse-where";
-import { savedPropertyIds } from "./favorites";
+import { favoriteIdsFor, savedPropertyIds } from "./favorites";
 import { sellerKindForRole } from "./constants";
-import { isValidObjectId } from "./ownership";
 import { LIVE_STATUSES } from "./status";
 
 // Re-exported so route handlers and components have one import for the browse
@@ -233,6 +233,18 @@ export type BrowseResult = {
    */
   readonly available: boolean;
   readonly listings: readonly PublicListing[];
+
+  /**
+   * Which of `listings` this viewer has already saved.
+   *
+   * Resolved here rather than in the page or the card because it is one indexed
+   * query over the ids this query just returned — twelve cards is one round trip,
+   * not twelve — and because a heart that renders from the same result object as
+   * the card cannot disagree with it. Always empty for a signed-out visitor, so
+   * callers never branch on null.
+   */
+  readonly savedIds: ReadonlySet<string>;
+
   readonly total: number;
   readonly page: number;
   readonly perPage: number;
@@ -267,6 +279,7 @@ export async function browsePublicListings(
   const empty = (available: boolean): BrowseResult => ({
     available,
     listings: [],
+    savedIds: new Set<string>(),
     total: 0,
     page: query.page,
     perPage: BROWSE_PER_PAGE,
@@ -277,15 +290,19 @@ export async function browsePublicListings(
     // Resolved from the session, never from the URL: `?saved=1` from a signed-out
     // visitor yields `null` here, which `buildBrowseWhere` turns into an empty
     // `id: { in: [] }` rather than an unfiltered marketplace.
-    const savedIds =
+    //
+    // Named for its job — it is the *filter input*, the whole set of ids this
+    // viewer has saved. Distinct from `savedOnPage` below, which is the subset of
+    // this page's results that are saved and is what the hearts render from.
+    const savedFilterIds =
       query.savedOnly && viewerId !== null ? await savedPropertyIds(viewerId) : null;
 
     // Nothing saved is an answer, not a query worth issuing.
-    if (query.savedOnly && (savedIds === null || savedIds.length === 0)) {
+    if (query.savedOnly && (savedFilterIds === null || savedFilterIds.length === 0)) {
       return empty(true);
     }
 
-    const where = buildBrowseWhere(query, savedIds);
+    const where = buildBrowseWhere(query, savedFilterIds);
 
     const [rows, total] = await Promise.all([
       prisma.property.findMany({
@@ -309,9 +326,19 @@ export async function browsePublicListings(
       prisma.property.count({ where }),
     ]);
 
+    // After the rows, because it is scoped to the ids this page actually holds.
+    // `favoriteIdsFor` swallows its own failures and returns an empty set — the
+    // cards are the content and the hearts are decoration on top of them, so a
+    // favorites hiccup must not turn a working browse page into an outage.
+    const savedOnPage = await favoriteIdsFor(
+      viewerId,
+      rows.map((row) => row.id)
+    );
+
     return {
       available: true,
       listings: rows.map((row) => toPublicListing(row, row.media, toPublicSeller(row.owner))),
+      savedIds: savedOnPage,
       total,
       page: query.page,
       perPage: BROWSE_PER_PAGE,
@@ -349,11 +376,12 @@ export async function browsePublicListings(
  * `lib/properties/ownership.ts` gives for answering 404 rather than 403 on the
  * owner side.
  *
- * A malformed id is rejected before Prisma sees it, because the MongoDB
- * connector throws on a non-ObjectId string rather than returning null.
+ * A malformed id is rejected before Prisma sees it — see `lib/utils/record-id.ts`
+ * for why that is a pre-filter rather than a crash guard now that the store is
+ * PostgreSQL.
  */
 export async function findPublicListing(rawId: string): Promise<PublicListingDetail | null> {
-  if (!isValidObjectId(rawId)) return null;
+  if (!isValidRecordId(rawId)) return null;
 
   try {
     const property = await prisma.property.findFirst({

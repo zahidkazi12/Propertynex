@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { PageShell } from "@/components/layout/PageShell";
 import { BrowseView } from "@/components/marketplace/BrowseView";
+import { getCurrentUser } from "@/lib/auth/session";
 import {
   browsePublicListings,
   parseBrowseQuery,
@@ -14,18 +15,19 @@ export const metadata: Metadata = {
 };
 
 /** `/rent` — the same browse experience as `/buy`, filtered to `RENT`. See the
- *  note on `searchParams` in `app/buy/page.tsx`. */
+ *  notes on `searchParams` and on the session read in `app/buy/page.tsx`. */
 export default async function RentPage({
   searchParams,
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
   const query = parseBrowseQuery(await searchParams, { lockedIntent: "RENT" });
-  const result = await browsePublicListings(query);
+  const user = await getCurrentUser();
+  const result = await browsePublicListings(query, { viewerId: user?.id ?? null });
 
   return (
     <PageShell>
-      <BrowseView basePath="/rent" query={query} result={result} />
+      <BrowseView basePath="/rent" query={query} result={result} signedIn={user !== null} />
     </PageShell>
   );
 }

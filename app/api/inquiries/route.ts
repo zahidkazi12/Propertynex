@@ -4,9 +4,9 @@ import { ZodError } from "zod";
 import { getCurrentUser } from "@/lib/auth/session";
 import { checkRateLimit, getClientIp } from "@/lib/auth/rate-limit";
 import { prisma } from "@/lib/db/prisma";
-import { isValidObjectId } from "@/lib/properties/ownership";
 import { LIVE_STATUSES } from "@/lib/properties/status";
 import { jsonError, jsonOk, jsonServerError, zodFieldErrors } from "@/lib/utils/api-response";
+import { isValidRecordId } from "@/lib/utils/record-id";
 import { inquirySchema } from "@/lib/validation/inquiry";
 
 /**
@@ -32,8 +32,8 @@ import { inquirySchema } from "@/lib/validation/inquiry";
  *
  * Same rule and same reason as saving: the property is loaded with
  * `status: { in: LIVE_STATUSES }`, so a DRAFT id yields the same 404 a nonexistent
- * one does. Without it, an anonymous caller could enumerate ObjectIds and read
- * the 201/404 split to discover which drafts exist — and, worse, could deliver
+ * one does. Without it, an anonymous caller could enumerate ids and read the
+ * 201/404 split to discover which drafts exist — and, worse, could deliver
  * mail into the inbox of a listing its owner has not published.
  *
  * ── Rate limiting an endpoint with no login ────────────────────────────────
@@ -66,9 +66,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const input = inquirySchema.parse(body);
 
-    // Shape-checked by the schema too; repeated here because the id reaches
-    // Prisma below and the Mongo connector throws on a malformed ObjectId.
-    if (!isValidObjectId(input.propertyId)) {
+    // Shape-checked by the schema too; repeated here so the module is safe to
+    // call from anywhere, not only from behind that schema.
+    if (!isValidRecordId(input.propertyId)) {
       return jsonError(NOT_FOUND_MESSAGE, 404);
     }
 

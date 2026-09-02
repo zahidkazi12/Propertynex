@@ -25,8 +25,8 @@ const AUTH_PAGES = ["/login", "/signup"];
  * module the same way route handlers can, so it does the cheap check —
  * "is there a session cookie at all?" — and redirects unauthenticated
  * requests away from protected pages immediately. The authoritative check
- * (does the cookie's token hash match a live, unexpired Session document in
- * MongoDB?) happens in `getCurrentUser()` inside each protected server
+ * (does the cookie's token hash match a live, unexpired Session row in the
+ * database?) happens in `getCurrentUser()` inside each protected server
  * component/layout and API route. Both layers matter: middleware keeps
  * obviously-unauthenticated users from ever rendering the page shell, and
  * the server-side check is what actually enforces authorization.

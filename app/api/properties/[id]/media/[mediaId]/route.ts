@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { ZodError } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import { requireOwnedProperty } from "@/lib/properties/access";
-import { isValidObjectId } from "@/lib/properties/ownership";
+import { isValidRecordId } from "@/lib/utils/record-id";
 import { applyPrimary, diffOrder, normalizeOrder } from "@/lib/media/order";
 import { toSafeGallery } from "@/lib/media/serialize";
 import { getMediaStorage } from "@/lib/media/storage";
@@ -40,8 +40,8 @@ export async function PATCH(request: NextRequest, ctx: RouteContext) {
   const guard = await requireOwnedProperty(id);
   if (!guard.ok) return guard.response;
 
-  // Before Prisma sees it: the Mongo connector throws on a malformed ObjectId.
-  if (!isValidObjectId(mediaId)) return jsonError(NOT_FOUND_MESSAGE, 404);
+  // Before Prisma sees it — an id the database could not have issued is a 404.
+  if (!isValidRecordId(mediaId)) return jsonError(NOT_FOUND_MESSAGE, 404);
 
   try {
     const input = mediaUpdateSchema.parse(await request.json());
@@ -144,7 +144,7 @@ export async function DELETE(_request: NextRequest, ctx: RouteContext) {
   const guard = await requireOwnedProperty(id);
   if (!guard.ok) return guard.response;
 
-  if (!isValidObjectId(mediaId)) return jsonError(NOT_FOUND_MESSAGE, 404);
+  if (!isValidRecordId(mediaId)) return jsonError(NOT_FOUND_MESSAGE, 404);
 
   try {
     const target = await prisma.propertyMedia.findFirst({

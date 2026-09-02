@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { RECORD_ID_PATTERN } from "@/lib/utils/record-id";
+
 /**
  * `POST`/`DELETE /api/favorites` — the whole request body.
  *
@@ -10,10 +12,11 @@ import { z } from "zod";
  * accidentally read it. That is the same subtraction `lib/validation/media.ts`
  * documents, applied to the smallest possible payload.
  *
- * The id is shape-checked here rather than at the database, because Prisma's
- * Mongo connector *throws* on a malformed ObjectId — a 500 where a 400 belongs.
- * `lib/properties/favorites.ts` guards again with `isValidObjectId` so the
- * module is safe to call from anywhere, not only from behind this schema.
+ * The id is shape-checked here rather than at the database, so a value the store
+ * could never have issued costs a 400 instead of a round trip;
+ * `lib/utils/record-id.ts` owns the pattern. `lib/properties/favorites.ts` guards
+ * again with `isValidRecordId` so the module is safe to call from anywhere, not
+ * only from behind this schema.
  *
  * The message is the same opaque one a genuinely missing listing gets. A
  * signed-in visitor probing ids must not be able to tell "that is not an id"
@@ -21,9 +24,7 @@ import { z } from "zod";
  * lib/properties/favorites.ts.
  */
 export const favoriteSchema = z.object({
-  propertyId: z
-    .string()
-    .regex(/^[0-9a-fA-F]{24}$/, "That property could not be found."),
+  propertyId: z.string().regex(RECORD_ID_PATTERN, "That property could not be found."),
 });
 
 export type FavoriteInput = z.infer<typeof favoriteSchema>;

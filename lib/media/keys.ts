@@ -14,7 +14,7 @@ import "server-only";
  *
  * This module removes the problem instead of filtering it: **the uploaded
  * filename is never used**. A key is composed entirely of server-generated
- * material — a fixed prefix, the property's own ObjectId, 16 bytes from
+ * material — a fixed prefix, the property's own id, 16 bytes from
  * `randomBytes`, and an extension chosen from the MIME type that
  * `lib/media/image.ts` concluded from the file's magic bytes. There is no
  * concatenation of client input anywhere in it, so there is no traversal,
@@ -35,6 +35,7 @@ import "server-only";
  */
 import { randomBytes } from "node:crypto";
 import { IMAGE_MIME_EXTENSIONS, type ImageMimeType } from "@/lib/media/constants";
+import { isValidRecordId } from "@/lib/utils/record-id";
 
 /** Every key lives under this prefix, so a storage root shared with something
  *  else later stays legible. */
@@ -48,6 +49,23 @@ const KEY_RANDOM_BYTES = 16;
 const ALLOWED_EXTENSIONS: readonly string[] = Object.values(IMAGE_MIME_EXTENSIONS);
 
 /**
+ * The property-id segment of a key, as *read back*.
+ *
+ * Deliberately wider than the id shape this application now issues. Ids used to
+ * be MongoDB ObjectIds (24 hex characters) and are now CUIDs
+ * (`lib/utils/record-id.ts`); a storage key is a historical artifact, so its
+ * shape is whatever produced it, not whatever the current schema would produce.
+ * Narrowing this to CUIDs alone would make every key written before the
+ * migration fail validation on read — and `isSafeStorageKey` is what the local
+ * driver consults before *every* read and delete, so those rows' files would
+ * become unreachable rather than merely legacy.
+ *
+ * `buildStorageKey` below is the opposite: it may only ever *produce* the current
+ * shape.
+ */
+const KEY_PROPERTY_SEGMENT = "(?:c[a-z0-9]{24}|[0-9a-f]{24})";
+
+/**
  * The one legal key shape.
  *
  * Anchored at both ends, with no `.` outside the extension and no character class
@@ -56,8 +74,8 @@ const ALLOWED_EXTENSIONS: readonly string[] = Object.values(IMAGE_MIME_EXTENSION
  * but unreadable.
  */
 const STORAGE_KEY_PATTERN = new RegExp(
-  `^${STORAGE_KEY_PREFIX}/[0-9a-f]{24}/[0-9a-f]{32}(?:${ALLOWED_EXTENSIONS.map((extension) =>
-    extension.replace(".", "\\.")
+  `^${STORAGE_KEY_PREFIX}/${KEY_PROPERTY_SEGMENT}/[0-9a-f]{32}(?:${ALLOWED_EXTENSIONS.map(
+    (extension) => extension.replace(".", "\\.")
   ).join("|")})$`
 );
 
@@ -68,14 +86,18 @@ export function storageExtension(mimeType: ImageMimeType): string {
 /**
  * A fresh, opaque key for one file.
  *
- * `propertyId` is expected to be a validated ObjectId — the callers all take it
+ * `propertyId` is expected to be a validated record id — the callers all take it
  * from a row they have already loaded and authorised, never from a request
  * parameter directly. The assertion below is a tripwire for a future caller that
- * forgets that, not a substitute for `isValidObjectId` at the boundary.
+ * forgets that, not a substitute for `isValidRecordId` at the boundary.
+ *
+ * It asserts the *current* id shape rather than the wider one `STORAGE_KEY_PATTERN`
+ * accepts: reading a pre-migration key is legitimate, writing a new one in that
+ * old shape is not.
  */
 export function buildStorageKey(propertyId: string, mimeType: ImageMimeType): string {
-  if (!/^[0-9a-f]{24}$/.test(propertyId)) {
-    throw new Error("buildStorageKey: propertyId must be a lowercase 24-character ObjectId");
+  if (!isValidRecordId(propertyId)) {
+    throw new Error("buildStorageKey: propertyId must be a CUID");
   }
 
   const random = randomBytes(KEY_RANDOM_BYTES).toString("hex");

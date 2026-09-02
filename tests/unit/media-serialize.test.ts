@@ -32,12 +32,12 @@ import {
  */
 
 const BASE: PropertyMedia = {
-  id: "aaaaaaaaaaaaaaaaaaaaaaa1",
-  propertyId: "64b7c0f1a2d3e4f5a6b7c8d9",
-  ownerId: "0123456789abcdef01234567",
+  id: "caaaaaaaaaaaaaaaaaaaaaaa1",
+  propertyId: "c64b7c0f1a2d3e4f5a6b7c8d9",
+  ownerId: "c0123456789abcdef01234567",
   kind: "IMAGE",
   storageDriver: "local",
-  storageKey: "properties/64b7c0f1a2d3e4f5a6b7c8d9/0123456789abcdef0123456789abcdef.jpg",
+  storageKey: "properties/c64b7c0f1a2d3e4f5a6b7c8d9/0123456789abcdef0123456789abcdef.jpg",
   mimeType: "image/jpeg",
   byteSize: 204_800,
   width: 1600,

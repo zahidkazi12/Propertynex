@@ -30,13 +30,13 @@ import {
  * client-supplied `storageKey` into a path handed to `readFile`, and would fail
  * here first.
  *
- * The rest is the shape checking that keeps a hostile payload from reaching
- * Prisma's Mongo connector, which throws on a malformed ObjectId rather than
- * returning nothing — a 500 where a 404 belongs.
+ * The rest is the shape checking that keeps a hostile payload from reaching the
+ * database at all — see `lib/utils/record-id.ts` for what that check is for now
+ * that ids are CUIDs and the store is PostgreSQL.
  */
 
-const VALID_ID = "64b7c0f1a2d3e4f5a6b7c8d9";
-const OTHER_ID = "0123456789abcdef01234567";
+const VALID_ID = "c64b7c0f1a2d3e4f5a6b7c8d9";
+const OTHER_ID = "c0123456789abcdef01234567";
 
 /** Fields a client might try to set that the server measures or derives itself. */
 const FORBIDDEN_FIELDS = {
@@ -133,14 +133,15 @@ test("a PATCH that asks for nothing is refused rather than answered 200", () => 
   }
 });
 
-test("an id that is not an ObjectId never reaches the database layer", () => {
-  // Prisma's Mongo connector throws on a malformed ObjectId, so a shape check here
-  // is what keeps a hostile path from becoming a 500 where a 404 belongs.
+test("an id that is not a CUID never reaches the database layer", () => {
+  // A shape check here is what keeps a hostile path from becoming a query at all,
+  // and keeps a malformed id answering 404 rather than something more informative.
   const hostile = [
     "not-an-id",
-    "64b7c0f1a2d3e4f5a6b7c8d", // 23
-    "64b7c0f1a2d3e4f5a6b7c8d99", // 25
-    "64b7c0f1a2d3e4f5a6b7c8dz",
+    "64b7c0f1a2d3e4f5a6b7c8d9", // a bare MongoDB ObjectId — no longer issued
+    "c64b7c0f1a2d3e4f5a6b7c8d", // 24
+    "c64b7c0f1a2d3e4f5a6b7c8d99", // 26
+    "c64b7c0f1a2d3e4f5a6b7c8d_",
     `${VALID_ID} `,
     ` ${VALID_ID}`,
     `${VALID_ID}\n`,

@@ -30,10 +30,10 @@ import type { PropertyMedia } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import {
   isAdminRole,
-  isValidObjectId,
   type PropertyActor,
 } from "@/lib/properties/ownership";
 import { isLive } from "@/lib/properties/status";
+import { isValidRecordId } from "@/lib/utils/record-id";
 
 /** A listing's media, in the seller's order. `kind` is filtered by the caller —
  *  the photo manager wants images, and there is nothing else to want yet. */
@@ -82,9 +82,9 @@ export async function findServableMedia(
   rawMediaId: string,
   actor: PropertyActor | null
 ): Promise<ServableMedia | null> {
-  // Prisma's Mongo connector throws on a malformed ObjectId, so the shape is
-  // checked before the query — `/api/media/../../etc/passwd` is a 404, not a 500.
-  if (!isValidObjectId(rawMediaId)) return null;
+  // The shape is checked before the query, so `/api/media/../../etc/passwd` is a
+  // 404 rather than a pointless round trip — see `lib/utils/record-id.ts`.
+  if (!isValidRecordId(rawMediaId)) return null;
 
   const found = await prisma.propertyMedia.findUnique({
     where: { id: rawMediaId },

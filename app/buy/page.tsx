@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { PageShell } from "@/components/layout/PageShell";
 import { BrowseView } from "@/components/marketplace/BrowseView";
+import { getCurrentUser } from "@/lib/auth/session";
 import {
   browsePublicListings,
   parseBrowseQuery,
@@ -22,9 +23,13 @@ export const metadata: Metadata = {
  * the results depend on both the query string and the current contents of the
  * listings collection, so there is nothing here worth caching at build time.
  *
+ * The session is read for two narrow reasons — which hearts render filled, and
+ * whether `?saved=1` has an account to resolve against. It cannot widen what the
+ * query returns; see `BrowseOptions` in `lib/properties/public.ts`.
+ *
  * The page itself holds no logic beyond wiring — parsing lives in
  * `parseBrowseQuery`, the query in `browsePublicListings`, the UI in
- * `BrowseView` — so `/buy` and `/rent` cannot drift apart.
+ * `BrowseView` — so `/buy`, `/rent` and `/explore` cannot drift apart.
  */
 export default async function BuyPage({
   searchParams,
@@ -32,11 +37,12 @@ export default async function BuyPage({
   searchParams: Promise<RawSearchParams>;
 }) {
   const query = parseBrowseQuery(await searchParams, { lockedIntent: "BUY" });
-  const result = await browsePublicListings(query);
+  const user = await getCurrentUser();
+  const result = await browsePublicListings(query, { viewerId: user?.id ?? null });
 
   return (
     <PageShell>
-      <BrowseView basePath="/buy" query={query} result={result} />
+      <BrowseView basePath="/buy" query={query} result={result} signedIn={user !== null} />
     </PageShell>
   );
 }
