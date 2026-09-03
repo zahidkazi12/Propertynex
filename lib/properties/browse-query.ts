@@ -178,8 +178,26 @@ export const BROWSE_FIELDS = {
   verifiedOnly: "verified",
   savedOnly: "saved",
   sort: "sort",
+  view: "view",
   page: "page",
 } as const;
+
+/**
+ * List or map.
+ *
+ * A *display* concern, not a filter — which is why it lives beside `sort` rather
+ * than among the predicates, and why `hasActiveFilters` and `activeFilterChips`
+ * ignore it. Switching to the map narrows nothing; offering a "clear" chip for it
+ * would imply it does.
+ *
+ * It is still carried in the URL, for the reason every other parameter here is:
+ * a result set is shareable, and someone who sends a colleague the map of
+ * three-bedroom flats in Indiranagar should not have them land on the list.
+ */
+export const BROWSE_VIEWS = ["list", "map"] as const;
+export type BrowseView = (typeof BROWSE_VIEWS)[number];
+
+export const DEFAULT_VIEW: BrowseView = "list";
 
 // ─────────────────────────────────────────────────────────────
 // The query
@@ -234,6 +252,17 @@ export type BrowseQuery = {
   readonly savedOnly: boolean;
 
   readonly sort: BrowseSort;
+
+  /**
+   * Which presentation of the same result set the visitor asked for.
+   *
+   * Deliberately not part of the `where`: list and map render identical data, so
+   * a listing that is absent from one is absent from both. That is what makes the
+   * map trustworthy as a view of the current filters rather than a second,
+   * differently-filtered dataset.
+   */
+  readonly view: BrowseView;
+
   readonly page: number;
 };
 
@@ -368,6 +397,11 @@ export function parseBrowseQuery(
   const rawSort = first(params[BROWSE_FIELDS.sort]);
   const sort = allowedSorts.find((candidate) => candidate === rawSort) ?? DEFAULT_SORT;
 
+  // Unknown values fall back to the list rather than erroring: `?view=satellite`
+  // is a typo or a stale bookmark, and the honest response to it is the default
+  // presentation of the same results.
+  const rawView = first(params[BROWSE_FIELDS.view]);
+
   // Deduplicated and sorted so that two URLs expressing the same amenity set are
   // the same URL — the filter is an unordered AND, and `hasEvery` treats it as
   // one, so the query string should not pretend the order carries meaning.
@@ -404,6 +438,7 @@ export function parseBrowseQuery(
     savedOnly: flag(first(params[BROWSE_FIELDS.savedOnly])),
 
     sort,
+    view: BROWSE_VIEWS.find((candidate) => candidate === rawView) ?? DEFAULT_VIEW,
     page: integerInRange(first(params[BROWSE_FIELDS.page]), 1, MAX_PAGE) ?? 1,
   };
 }
@@ -415,10 +450,11 @@ export function parseBrowseQuery(
 /**
  * Has the visitor narrowed anything?
  *
- * Sort and page are excluded: neither removes a listing from the result set, so
- * neither can be the reason a result set is empty — and telling someone to
- * "clear your filters" when all they did was turn to page 9 would be wrong. The
- * intent counts only when the visitor chose it, since on `/buy` it is the page.
+ * Sort, view and page are excluded: none of them removes a listing from the
+ * result set, so none can be the reason a result set is empty — and telling
+ * someone to "clear your filters" when all they did was turn to page 9, or switch
+ * to the map, would be wrong. The intent counts only when the visitor chose it,
+ * since on `/buy` it is the page.
  */
 export function hasActiveFilters(query: BrowseQuery): boolean {
   return (
@@ -608,6 +644,9 @@ export function browseQueryString(
   if (merged.verifiedOnly) params.set(BROWSE_FIELDS.verifiedOnly, "1");
   if (merged.savedOnly) params.set(BROWSE_FIELDS.savedOnly, "1");
   if (merged.sort !== DEFAULT_SORT) params.set(BROWSE_FIELDS.sort, merged.sort);
+  // Carried through every filter change, so switching to the map and then
+  // narrowing the price range does not bounce the visitor back to the list.
+  if (merged.view !== DEFAULT_VIEW) params.set(BROWSE_FIELDS.view, merged.view);
   if (merged.page > 1) params.set(BROWSE_FIELDS.page, String(merged.page));
 
   const search = params.toString();

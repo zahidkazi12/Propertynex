@@ -83,6 +83,22 @@ enum ContactPreference {
   IN_APP
 }
 
+/// How precisely a listing's coordinates may be published on a public map.
+///
+/// `APPROXIMATE` is the default, and deliberately so: every row that existed
+/// before this enum was added has coordinates its owner supplied for internal
+/// use, never for publication on a map. Defaulting to EXACT would retroactively
+/// publish the door of every listing already in the table, which is a consent
+/// decision the migration is not entitled to make on an owner's behalf.
+///
+/// `APPROXIMATE` does not fabricate a position — `lib/properties/location.ts`
+/// rounds the real coordinate to a coarser grid, and the UI labels it as
+/// approximate. The exact value stays in the row for the owner's own use.
+enum LocationPrecision {
+  EXACT
+  APPROXIMATE
+}
+
 enum InquiryStatus {
   NEW
   READ
@@ -200,6 +216,10 @@ model Property {
   mapsUrl   String?
   latitude  Float?
   longitude Float?
+
+  /// Gates how precisely `latitude`/`longitude` reach a public map. Safe by
+  /// default — see the enum's own note.
+  locationPrecision LocationPrecision @default(APPROXIMATE)
 
   contactPreference ContactPreference @default(BOTH)
 

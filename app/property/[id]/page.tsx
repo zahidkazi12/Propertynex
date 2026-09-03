@@ -24,11 +24,13 @@ import {
 
 import { PageShell } from "@/components/layout/PageShell";
 import { PropertyGallery } from "@/components/media/PropertyGallery";
+import { PropertyLocationSection } from "@/components/maps/PropertyLocationSection";
 import { FavoriteButton } from "@/components/marketplace/FavoriteButton";
 import { InquiryForm } from "@/components/marketplace/InquiryForm";
 import { ListingCard } from "@/components/marketplace/ListingCard";
 import { Reveal } from "@/components/ui/Reveal";
 import { getCurrentUser } from "@/lib/auth/session";
+import { findNearbyPlaces } from "@/lib/maps/nearby";
 import {
   AMENITY_GROUPS,
   FURNISHING_LABELS,
@@ -189,6 +191,17 @@ export default async function PropertyDetailPage({ params }: PageProps) {
     ...similar.map((other) => other.id),
   ]);
 
+  // Asked only when there is a real coordinate to ask about, and answered only
+  // when a nearby-places provider is installed. `null` — the shipped state — means
+  // the section is omitted rather than shown empty. See `lib/maps/nearby.ts` for
+  // why no provider ships and why that is deliberate.
+  const nearby = listing.location
+    ? await findNearbyPlaces({
+        latitude: listing.location.latitude,
+        longitude: listing.location.longitude,
+      })
+    : null;
+
   const isRental = listing.listingType === "RENT";
   const backHref = isRental ? "/rent" : "/buy";
   const configuration = formatConfiguration(listing.bedrooms, listing.bathrooms);
@@ -348,6 +361,13 @@ export default async function PropertyDetailPage({ params }: PageProps) {
                   </section>
                 </Reveal>
               )}
+
+              {/* Location. Last in the column because it is the section a visitor
+                  scrolls to once the listing itself has convinced them, and because
+                  putting the map below the fold is what lets it load lazily. */}
+              <Reveal delay={0.22} className="mt-7">
+                <PropertyLocationSection listing={listing} nearby={nearby} />
+              </Reveal>
             </div>
 
             {/* ── Sidebar ─────────────────────────────────────────────────── */}

@@ -20,13 +20,16 @@ import {
   isRoomBearing,
   LISTING_TYPE_LABELS,
   LISTING_TYPE_ORDER,
+  LOCATION_PRECISION_DESCRIPTIONS,
+  LOCATION_PRECISION_LABELS,
+  LOCATION_PRECISION_ORDER,
   PARKING_LABELS,
   PARKING_ORDER,
   PROPERTY_TYPE_GROUPS,
   PROPERTY_TYPE_LABELS,
 } from "@/lib/properties/constants";
 import type { ApiErrorResponse, SafeProperty } from "@/types";
-import type { PropertyType } from "@prisma/client";
+import type { LocationPrecision, PropertyType } from "@prisma/client";
 
 /**
  * The add / edit listing form, shared by `/dashboard/properties/new` and
@@ -98,6 +101,7 @@ type FormState = {
   mapsUrl: string;
   latitude: string;
   longitude: string;
+  locationPrecision: string;
   contactPreference: string;
 };
 
@@ -134,6 +138,7 @@ const FIELD_ORDER: readonly string[] = [
   "mapsUrl",
   "latitude",
   "longitude",
+  "locationPrecision",
   "contactPreference",
 ];
 
@@ -205,6 +210,7 @@ function initialState(property?: SafeProperty): FormState {
       mapsUrl: "",
       latitude: "",
       longitude: "",
+      locationPrecision: "APPROXIMATE",
       contactPreference: "BOTH",
     };
   }
@@ -235,6 +241,7 @@ function initialState(property?: SafeProperty): FormState {
     mapsUrl: property.mapsUrl ?? "",
     latitude: fromNumber(property.latitude),
     longitude: fromNumber(property.longitude),
+    locationPrecision: property.locationPrecision,
     contactPreference: property.contactPreference,
   };
 }
@@ -278,6 +285,13 @@ export function PropertyForm({ property }: PropertyFormProps) {
   const chosenType = form.propertyType ? (form.propertyType as PropertyType) : null;
   const showRooms = chosenType !== null && isRoomBearing(chosenType);
   const showBuilding = chosenType !== null && !isLand(chosenType);
+
+  // Both boxes hold something. Deliberately not "is this a valid coordinate" —
+  // the precision control should appear as soon as the owner is evidently
+  // entering a pin, not only once they have typed a parseable one. The server
+  // validates the numbers; this only decides whether the question is relevant.
+  const hasCoordinateInput =
+    form.latitude.trim().length > 0 && form.longitude.trim().length > 0;
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -369,6 +383,10 @@ export function PropertyForm({ property }: PropertyFormProps) {
       mapsUrl: form.mapsUrl,
       latitude: form.latitude,
       longitude: form.longitude,
+      // Sent only alongside a coordinate pair. The server pins it back to the
+      // private default when the pair is absent anyway; not sending it keeps the
+      // payload honest about what the owner actually chose.
+      locationPrecision: hasCoordinateInput ? form.locationPrecision : "",
       contactPreference: form.contactPreference,
       ...(editing ? {} : { publish: intent === "publish" }),
     };
@@ -846,9 +864,32 @@ export function PropertyForm({ property }: PropertyFormProps) {
 
         <p className="flex items-start gap-2 text-xs leading-relaxed text-slate-500">
           <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          Coordinates are only used to place a pin on a future map view. Leaving them empty
-          costs you nothing today.
+          Coordinates place your listing on the Explore map and on its own page. Leaving them
+          empty costs you nothing — your listing simply carries no pin.
         </p>
+
+        {/* Only meaningful once a pin exists, so it is disclosed progressively:
+            asking an owner to choose a precision for coordinates they have not
+            entered is a decision about nothing. `normalise()` also pins the stored
+            value back to APPROXIMATE when the pair is absent, so hiding the
+            control cannot leave a stale EXACT behind. */}
+        {hasCoordinateInput && (
+          <div className="animate-fade-in" style={{ animationFillMode: "both" }}>
+            <SelectField
+              label="Map precision"
+              name="locationPrecision"
+              options={LOCATION_PRECISION_ORDER.map((value) => ({
+                value,
+                label: LOCATION_PRECISION_LABELS[value],
+              }))}
+              value={form.locationPrecision}
+              onChange={(event) => set("locationPrecision", event.target.value)}
+              error={errors.locationPrecision}
+              hint={LOCATION_PRECISION_DESCRIPTIONS[form.locationPrecision as LocationPrecision]}
+              disabled={busy}
+            />
+          </div>
+        )}
       </SectionCard>
 
       <SectionCard

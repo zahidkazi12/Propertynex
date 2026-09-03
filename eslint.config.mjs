@@ -20,6 +20,22 @@ const config = [
     ],
   },
   ...next,
+  {
+    rules: {
+      /**
+       * `eslint-config-next` does not extend `eslint:recommended`, so this rule was
+       * off — which made the five `eslint-disable-next-line no-control-regex`
+       * comments in this repo report "unused directive" warnings. They are not
+       * stale: every one sits on a deliberate `[\x00-\x1F\x7F-\x9F]` strip in a
+       * sanitiser (`lib/validation/{property,inquiry,media}.ts`, and the two
+       * upload display-name helpers). Enabling the rule is what makes those
+       * comments mean something again, and it catches a control character that
+       * arrives in a regex by accident — a literal escape pasted into a pattern —
+       * rather than on purpose.
+       */
+      "no-control-regex": "error",
+    },
+  },
 ];
 
 export default config;

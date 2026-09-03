@@ -3,10 +3,12 @@ import type { ListingType } from "@prisma/client";
 import Link from "next/link";
 import { ArrowRight, PlugZap, SearchX, Sparkles, Tag, type LucideIcon } from "lucide-react";
 import { Reveal } from "@/components/ui/Reveal";
+import { ExploreMapPanel } from "@/components/maps/ExploreMapPanel";
 import { IntentSwitch } from "@/components/marketplace/IntentSwitch";
 import { ListingCard } from "@/components/marketplace/ListingCard";
 import { ListingFilters } from "@/components/marketplace/ListingFilters";
 import { Pagination } from "@/components/marketplace/Pagination";
+import { ViewSwitch } from "@/components/marketplace/ViewSwitch";
 import { groupIndian } from "@/lib/properties/format";
 import { browseQueryString, hasActiveFilters, type BrowseQuery } from "@/lib/properties/browse-query";
 import type { BrowseResult } from "@/lib/properties/public";
@@ -18,6 +20,17 @@ import type { BrowseResult } from "@/lib/properties/public";
  * `listingType` they query — `/explore` is the case where that type is *both*.
  * Three near-identical page files would drift the first time a filter or an empty
  * state changed on one of them.
+ *
+ * ── List and map are one result set ─────────────────────────────────────────
+ *
+ * `query.view` picks the presentation; it never reaches the `where`. The map is
+ * handed `result.listings` — the same array the cards render — so it cannot show a
+ * listing the list omits, or omit one the list shows. A visitor who filters in one
+ * view and switches to the other is looking at the same properties, which is the
+ * only arrangement in which the map is trustworthy.
+ *
+ * The cards stay visible in map view rather than being replaced by it: the map
+ * answers "where", the cards answer "what", and a buyer needs both at once.
  *
  * ── The three empty states, and why they are three ──────────────────────────
  *
@@ -188,23 +201,59 @@ export function BrowseView({
 
           {result.available && result.total > 0 && (
             <>
-              <div className="mt-10 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+              <div className="mt-10 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
                   {resultSummary(result, copy)}
                 </h2>
+                <ViewSwitch basePath={basePath} query={query} />
               </div>
 
-              <div className="mt-6 grid gap-5 sm:grid-cols-2 sm:gap-6 xl:grid-cols-3">
-                {result.listings.map((listing) => (
-                  <ListingCard
-                    key={listing.id}
-                    listing={listing}
-                    saved={result.savedIds.has(listing.id)}
-                    signedIn={signedIn}
-                    redirectTo={redirectTo}
-                  />
-                ))}
-              </div>
+              {query.view === "map" ? (
+                /*
+                 * Map view. One grid, two children, and the order flips at `lg`:
+                 * on a phone the map comes first at a fixed height so it is the
+                 * thing you see, with the same cards continuing underneath; on a
+                 * desktop the cards take the left column and the map sticks to the
+                 * right at viewport height.
+                 *
+                 * Stacking rather than splitting below `lg` is what keeps 320px free
+                 * of horizontal overflow — there is no second column to squeeze.
+                 */
+                <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-6">
+                  <div className="order-first h-[58dvh] min-h-[20rem] lg:order-last lg:sticky lg:top-24 lg:h-[calc(100dvh-9rem)]">
+                    <ExploreMapPanel
+                      listings={result.listings}
+                      savedIds={result.savedIds}
+                      signedIn={signedIn}
+                      redirectTo={redirectTo}
+                    />
+                  </div>
+
+                  <div className="grid gap-5 sm:grid-cols-2 sm:gap-6 lg:grid-cols-1 xl:grid-cols-2">
+                    {result.listings.map((listing) => (
+                      <ListingCard
+                        key={listing.id}
+                        listing={listing}
+                        saved={result.savedIds.has(listing.id)}
+                        signedIn={signedIn}
+                        redirectTo={redirectTo}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-6 grid gap-5 sm:grid-cols-2 sm:gap-6 xl:grid-cols-3">
+                  {result.listings.map((listing) => (
+                    <ListingCard
+                      key={listing.id}
+                      listing={listing}
+                      saved={result.savedIds.has(listing.id)}
+                      signedIn={signedIn}
+                      redirectTo={redirectTo}
+                    />
+                  ))}
+                </div>
+              )}
 
               <Pagination
                 basePath={basePath}

@@ -4,6 +4,7 @@ import type {
   Furnishing,
   InquiryStatus,
   ListingType,
+  LocationPrecision,
   MediaKind,
   ParkingType,
   PropertyStatus,
@@ -79,6 +80,10 @@ export type SafeProperty = {
   latitude: number | null;
   longitude: number | null;
 
+  /** How precisely the coordinates above may reach a public map. The owner's own
+   *  view keeps the exact pair regardless — this gates publication, not storage. */
+  locationPrecision: LocationPrecision;
+
   contactPreference: ContactPreference;
 
   status: PropertyStatus;
@@ -88,6 +93,24 @@ export type SafeProperty = {
 
   createdAt: string;
   updatedAt: string;
+};
+
+/**
+ * Where a public map may put this listing's pin.
+ *
+ * The one piece of location data that crosses into the public projection, and it
+ * crosses deliberately narrowed: `precision` tells the renderer whether the pair
+ * is the stored coordinate or a rounded one, so the UI can label an approximate
+ * pin as approximate instead of implying a doorstep. `lib/properties/location.ts`
+ * builds it and explains why rounding is a reduction rather than a fabrication.
+ *
+ * Absent (`null` on the listing) when the owner supplied no usable coordinates.
+ * There is no "default" position: a listing with no coordinates gets no marker.
+ */
+export type PublicMapLocation = {
+  latitude: number;
+  longitude: number;
+  precision: LocationPrecision;
 };
 
 /**
@@ -101,10 +124,16 @@ export type SafeProperty = {
  *   - `ownerId` — a browse card must not be joinable back to an account. The
  *     seller is described by `seller` below, which carries a display name and a
  *     category and no identifier, so a card cannot be used to enumerate users.
- *   - `addressLine1/2`, `pincode`, `mapsUrl`, `latitude`, `longitude` — a public
- *     listing advertises its locality and city, not its exact door. This holds on
- *     the detail page too: `PublicListingDetail` widens the *seller*, not the
- *     address.
+ *   - `addressLine1/2`, `pincode`, `mapsUrl` — a public listing advertises its
+ *     locality and city, not its exact door. This holds on the detail page too:
+ *     `PublicListingDetail` widens the *seller*, not the address.
+ *   - `latitude`/`longitude` as raw columns. A map needs a position, so one is
+ *     published — but as `location` below, through the precision gate in
+ *     `lib/properties/location.ts`, never as the stored pair. The raw columns
+ *     staying out of this type is what keeps a future map surface from reaching
+ *     past that gate by reading the field it expects to find.
+ *   - `locationPrecision` itself is not published as a setting, only as the
+ *     `precision` marker on the position it produced.
  *   - every contact field, and `contactPreference` itself — with no contact
  *     details in the type, `IN_APP` ("do not surface my phone or email") holds
  *     by construction rather than by a rule someone has to remember. The detail
@@ -145,6 +174,16 @@ export type PublicListing = {
   locality: string | null;
   city: string;
   state: string;
+
+  /**
+   * The map pin, or `null` for a listing with no usable coordinates.
+   *
+   * This is the *only* coordinate data in the public shape, and it is not the raw
+   * column: `toPublicMapLocation` applies the listing's `locationPrecision`
+   * first. `latitude`/`longitude` themselves stay absent from this type, so a new
+   * map surface cannot reach past the precision gate by accident.
+   */
+  location: PublicMapLocation | null;
 
   /** Carries the PROPERTYNEX verified badge. */
   verified: boolean;

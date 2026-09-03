@@ -4,6 +4,7 @@ import type {
   ContactPreference,
   Furnishing,
   ListingType,
+  LocationPrecision,
   ParkingType,
   PropertyStatus,
   PropertyType,
@@ -17,6 +18,7 @@ import {
   isLand,
   isRoomBearing,
   LISTING_TYPE_LABELS,
+  LOCATION_PRECISION_LABELS,
   MAX_AMENITIES,
   PARKING_LABELS,
   PROPERTY_TYPE_LABELS,
@@ -233,6 +235,22 @@ const propertyBaseSchema = z.object({
   latitude: optionalCoordinate("latitude", 90),
   longitude: optionalCoordinate("longitude", 180),
 
+  /**
+   * How precisely those coordinates may be published.
+   *
+   * Defaulted rather than required, so a client that predates this field — or an
+   * owner who never opens the location section — lands on the private option
+   * instead of failing validation or being opted into publication. The default
+   * matches the column default in `prisma/schema.prisma` deliberately: two places
+   * decide "what if unspecified", and they must give the same answer.
+   */
+  locationPrecision: z
+    .preprocess(
+      blankToUndefined,
+      enumOf(LOCATION_PRECISION_LABELS, "Choose how precisely to show this location").optional()
+    )
+    .transform((value) => value ?? "APPROXIMATE"),
+
   contactPreference: enumOf(
     CONTACT_PREFERENCE_LABELS,
     "Choose how buyers should contact you"
@@ -321,6 +339,7 @@ export type PropertyWriteData = {
   mapsUrl: string | null;
   latitude: number | null;
   longitude: number | null;
+  locationPrecision: LocationPrecision;
   contactPreference: ContactPreference;
 };
 
@@ -373,6 +392,16 @@ function normalise(data: z.infer<typeof propertyBaseSchema>): PropertyWriteData 
     mapsUrl: data.mapsUrl ?? null,
     latitude: data.latitude ?? null,
     longitude: data.longitude ?? null,
+
+    // Meaningless without a coordinate to apply it to, so it is pinned back to
+    // the private default when the pair is absent. Storing EXACT against no
+    // coordinates would leave a listing that starts publishing its precise
+    // position the moment someone later fills the pair in — a consent decision
+    // made by an unrelated edit.
+    locationPrecision:
+      data.latitude === undefined || data.longitude === undefined
+        ? "APPROXIMATE"
+        : (data.locationPrecision as LocationPrecision),
 
     contactPreference: data.contactPreference as ContactPreference,
   };

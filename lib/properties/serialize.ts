@@ -48,6 +48,7 @@ export function toSafeProperty(property: Property): SafeProperty {
     mapsUrl: property.mapsUrl,
     latitude: property.latitude,
     longitude: property.longitude,
+    locationPrecision: property.locationPrecision,
 
     contactPreference: property.contactPreference,
 

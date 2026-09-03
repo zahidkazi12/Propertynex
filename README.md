@@ -37,11 +37,11 @@ hashing, expiry, attempt limits, single-use enforcement — is implemented here,
 ### 2.1 Prerequisites
 
 - Node.js **18.18+**
-- A MongoDB instance running **as a replica set** — Prisma's MongoDB connector requires this
-  even for a single local node, because it relies on MongoDB transactions.
-  - **Easiest option:** a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster — these
-    are already configured as replica sets.
-  - **Local option:** see §2.4 below.
+- A **PostgreSQL 14+** database. Two connection strings are needed — a pooled one and a direct
+  one (§2.5 explains why, and why they are the same string locally and different on a host).
+  - **Easiest option:** a [Vercel Postgres / Neon](https://vercel.com/storage/postgres) database —
+    it creates both variables for you.
+  - **Local option:** see §2.5 below.
 
 ### 2.2 Install
 
@@ -72,6 +72,10 @@ Fill in:
   without it, and the resulting error never echoes any secret's value.
 
 All of these live only in `.env` / `.env.local`, which are gitignored — never commit them.
+
+**Maps are optional.** `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` enables the Explore map view and the
+map on a listing's page. Leave it unset and the app degrades deliberately rather than breaking —
+see §8.
 
 Passcode delivery also needs a provider per channel. In development both default to `console`,
 which prints the passcode to the server console — that is enough to exercise the whole flow
@@ -183,15 +187,42 @@ change, on Node 24 / Next 16.3.1 / Prisma 6.19.3:
 | Check | Command | Result |
 |-------|---------|--------|
 | Type-check | `npx tsc --noEmit` | passes |
-| Lint | `npm run lint` | passes (0 errors; 1 pre-existing warning, below) |
+| Lint | `npm run lint` | passes (0 errors, 0 warnings) |
 | Production build | `npm run build` | passes |
-| Unit tests | see §2.4 | 47/47 pass |
-| Integration tests | see §2.4 | 32/32 pass |
-| Production fail-closed | see §2.4 | passes (both scenarios) |
+| Unit tests | see §2.4 | 200/200 pass |
+| Integration tests | see §2.4 | **not re-run for Phase 6** — needs a live database |
+| Production fail-closed | see §2.4 | **not re-run for Phase 6** — needs a live database |
 
-The lint warning is an unused `eslint-disable` for `no-control-regex` at
-`lib/validation/property.ts:72`. It is a stale comment, not a code defect, and was left in place
-rather than removed during a frontend change to a validation module — a one-line follow-up.
+The first four were run against this working tree after the maps work landed. The last two were
+last green on the OTP milestone and are unchanged by Phase 6 — nothing under `app/api/auth/` or
+`lib/otp/` was touched — but they drive real HTTP against a running server and a reachable
+PostgreSQL instance, so they are listed as unverified here rather than assumed. Run them before
+tagging a release.
+
+**`prisma db push` is outstanding.** Phase 6 adds the `LocationPrecision` enum and the
+`Property.locationPrecision` column (§8.5). `npx prisma generate` has been run, so the client
+types match the schema and the build passes — but no database has had the column applied. Until
+`npx prisma db push` runs, any query touching a property will fail against an unmigrated
+database.
+
+Two lint findings in the maps components were fixed rather than suppressed, both
+`react-hooks/set-state-in-effect` (an error, not a warning, under
+`eslint-config-next/core-web-vitals`):
+
+- `ExploreMap` cleared a filtered-away selection from an effect. The selected listing is already
+  resolved against the current result set on every render, so the effect only added a commit that
+  showed a preview for a removed pin and corrected it afterwards. It was deleted.
+- `LazyMapEmbed` called `setVisible(true)` in an effect body when `IntersectionObserver` is
+  absent. It now schedules that on a task. The tempting fix — a lazy `useState` initialiser that
+  feature-detects — would have been a hydration bug: this component is server-rendered, and
+  `IntersectionObserver` is always undefined in Node, so server and client would disagree.
+
+The previously-documented "unused `eslint-disable` for `no-control-regex`" warning is also gone,
+and there were five of them rather than one. They were never stale: each sits on a deliberate
+`[\x00-\x1F\x7F-\x9F]` strip in a sanitiser. `eslint-config-next` simply does not extend
+`eslint:recommended`, so the rule they suppress was switched off. `eslint.config.mjs` now enables
+`no-control-regex`, which makes the five comments meaningful again instead of deleting the record
+of why those character classes are intentional.
 
 Note that `npm run lint` was changed from `next lint` to `eslint .`, and `.eslintrc.json` was
 replaced by `eslint.config.mjs`: Next 16 removed the `next lint` command, and
@@ -248,7 +279,9 @@ components/
   layout/      Navbar, Footer, Logo, PageShell, background effects
   landing/     Hero, intent actions, feature sections, development progress panel
   marketplace/ BrowseView, ListingCard, ListingFilters, IntentSwitch, Pagination,
-               FavoriteButton, InquiryForm
+               ViewSwitch (list/map), FavoriteButton, InquiryForm
+  maps/        ExploreMapPanel (lazy gate), ExploreMap (SDK + markers),
+               MapMarkerPreview, PropertyLocationSection, LazyMapEmbed
   media/       ImageUploader, PropertyGallery
   auth/        Forms, shared field components, OTP input, resend control, recovery flow
   dashboard/   Sidebar, topbar, profile form, property form, status panel, stat cards
@@ -257,11 +290,14 @@ lib/
   auth/        session.ts, password-reset-session.ts, password.ts,
                security-questions.ts (legacy, unused), rate-limit.ts
   otp/         config.ts, code.ts, send.ts, providers/
+  maps/        links.ts (key-free Google Maps URLs), config.ts (browser key),
+               loader.ts (single-instance SDK load), nearby.ts (provider seam)
   media/       constants.ts, image.ts (magic-byte sniffing), keys.ts (storage keys),
                order.ts, read.ts, serialize.ts, storage/ (pluggable driver)
   properties/  constants.ts (labels), format.ts (price/area/date display),
                access.ts, ownership.ts, status.ts, serialize.ts (owner-scoped),
                favorites.ts, browse-query.ts, browse-where.ts,
+               location.ts (the map-pin precision gate — see §8.3),
                public.ts (read-only public browse + detail — see §7.6)
   utils/       identifier.ts, record-id.ts (the one id shape), timing.ts,
                api-response.ts, cn.ts
@@ -269,6 +305,7 @@ lib/
   db/          Prisma client singleton
 types/
   index.ts                     Serialized DTOs (SafeUser, SafeProperty, PublicListing, …)
+  google-maps.d.ts             The slice of the Maps JS API actually used
 prisma/
   schema.prisma
 tests/
@@ -295,7 +332,7 @@ middleware.ts                  Edge-layer route protection (paired with server-s
   "does a session cookie exist" check at the edge to redirect obviously-unauthenticated
   requests immediately, and each protected layout/API route calls `getCurrentUser()`, which is
   the actual authority — it hashes the cookie and looks up a live, unexpired session in
-  MongoDB. Middleware alone is never trusted for authorization.
+  PostgreSQL. Middleware alone is never trusted for authorization.
 
 ### 4.2 OTP password recovery
 
@@ -464,11 +501,28 @@ internal error details are logged server-side only, never sent to the client.
 - In-app enquiries — `POST /api/inquiries`, open to signed-out visitors, rate limited per caller
   and per listing
 
+**Maps and location (this milestone):**
+- Explore has a List / Map switch held in the URL (`?view=map`), so a filtered map is shareable
+  and switching views preserves every filter, the sort and the intent
+- The map plots one marker per listing that has coordinates, from the *same* result set the cards
+  render — never a second query — and states how many results it cannot plot
+- Tapping a marker opens a preview (photo, price, title, locality, type, beds/baths, area,
+  verified badge, save, and a link to the listing)
+- `/property/[id]` has a Location section: embedded map, precision badge, address, **Get
+  directions** and **View on Google Maps**
+- Directions work with no API key and no SDK, on desktop and mobile — §8.2
+- `LocationPrecision` per listing (`APPROXIMATE` by default) rounds a published pin to ~110 m and
+  labels it as approximate — §8.3
+- Graceful, designed states everywhere the map cannot be drawn: no key, no coordinates, SDK load
+  failure, and "none of these results has a pin"
+
 **Still to build:**
 - Owner-facing inbox for received enquiries (`PropertyInquiry` rows are written; nothing reads them)
 - A dashboard `Favorites` screen — the sidebar item is still disabled; saved listings are reachable
   today only through `/explore?saved=1`
-- Agent directory, map search, messaging, notifications
+- Nearby places: the provider seam exists, no provider ships — §8.4
+- Map marker clustering, and drawing a search area on the map
+- Agent directory, messaging, notifications
 - Admin panel (verification is a real status but has no reviewer UI), payments
 
 ---
@@ -515,6 +569,21 @@ internal error details are logged server-side only, never sent to the client.
       same filtered page
 - [ ] Upload a photo to a listing from the dashboard photo manager → it appears on the card and on
       the detail page, cover first
+- [ ] On Explore, switch to Map → markers appear; apply a filter → the markers change with the
+      cards, and the switch stays on Map
+- [ ] Tap a marker → preview card appears with photo, price and a working "View details"
+- [ ] Copy an `?view=map` URL with filters into a new tab → same view, same filters
+- [ ] Edit a listing, enter latitude/longitude → the Map precision control appears; clear one
+      coordinate → it disappears
+- [ ] Save with "Show the general area only" → the listing page pin is labelled "Approximate
+      location"; switch to exact → labelled "Exact location"
+- [ ] Enter latitude 91 or longitude 181 → field-level error, nothing saved
+- [ ] Open a listing with no coordinates → "Map location not available", and Get directions still
+      opens Google Maps at the locality
+- [ ] Unset `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, restart → Explore's Map view shows the "unavailable"
+      panel, the listing page shows the locality panel, and both directions links still work
+- [ ] On a phone, in Map view: one-finger drag scrolls the page (two fingers pan the map), and
+      nothing scrolls sideways
 - [ ] Resize every page from 320px to 1920px — no horizontal scroll, no overlapping elements;
       check the six passcode boxes stay on one line at 320px
 
@@ -612,9 +681,10 @@ So `lib/properties/public.ts` was added. What it is:
   public browse.
 - **Narrower than `SafeProperty` on purpose.** `toPublicListing` copies fields one by one — never
   a spread — and returns `PublicListing`, which has no `ownerId`, no `addressLine1/2`, no
-  `pincode`, no coordinates, no `mapsUrl`, and no contact fields at all. `ContactPreference.IN_APP`
-  therefore cannot be violated by a browse page: there is no code path through which a phone
-  number or email could reach one.
+  `pincode`, no raw coordinates, no `mapsUrl`, and no contact fields at all.
+  `ContactPreference.IN_APP` therefore cannot be violated by a browse page: there is no code path
+  through which a phone number or email could reach one. A map *pin* is published, as `location`,
+  through the precision gate described in §8.3.
 - **Non-throwing.** A missing or unreachable database returns `available: false`, which renders
   "Listings are temporarily unavailable" instead of a 500 — and is kept distinct from "no listings
   match your filters" and "nothing is published yet", because those three mean different things
@@ -622,3 +692,159 @@ So `lib/properties/public.ts` was added. What it is:
 
 Nothing under `app/api/`, `lib/auth/`, `lib/otp/` or `prisma/` was modified to make this work.
 If a single public listings endpoint is preferred later, this module is the natural body for it.
+
+---
+
+## 8. Maps, location and directions
+
+### 8.1 Configuring Google Maps
+
+One optional variable:
+
+```bash
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY="your-browser-key"
+```
+
+In the [Google Cloud console](https://console.cloud.google.com/):
+
+1. Enable **Maps JavaScript API** (the Explore map) and **Maps Embed API** (the map on a listing
+   page). Nothing else is used.
+2. Create an API key, then restrict it — **Application restrictions → HTTP referrers**, listing
+   only your own domains, and **API restrictions**, allowing only those two APIs.
+
+`NEXT_PUBLIC_` is correct and deliberate. Both are browser products: the key travels in a
+`<script src>` / `<iframe src>` and is visible in devtools by design, so it is protected by
+*restriction*, not secrecy. An unrestricted key can be lifted from your page and billed to your
+account — the restriction step is the security control, not the variable name.
+
+No map SDK is installed. `lib/maps/loader.ts` loads the Maps JavaScript API from one `<script>`
+tag, cached in a module-level promise so the SDK is fetched at most once per page session, and the
+listing page uses the Embed API through a plain `<iframe>` and never loads the SDK at all. That
+follows the same "documented HTTP surface, no vendor client" position `lib/otp/providers/` takes
+with Resend and Twilio.
+
+### 8.2 What happens with no key
+
+Nothing breaks, and nothing renders as an empty grey box:
+
+| Surface | With a key | Without one |
+|---------|-----------|-------------|
+| Explore, Map view | Interactive dark map, one marker per listing with coordinates, tap a marker for a preview card | A panel saying the list is the complete view. Neither the map chunk nor the Google SDK is downloaded. |
+| Listing page, Location | Embedded map centred on the pin | Locality, city and state, plus the precision note |
+| **Get directions** | Works | **Works** |
+| **View on Google Maps** | Works | **Works** |
+
+The last two rows are the point. `lib/maps/links.ts` builds
+[Google Maps URL Scheme](https://developers.google.com/maps/documentation/urls/get-started) links,
+which need no key, no SDK and no billing, and which hand off to the native Maps app on Android and
+iOS. So an unconfigured deployment loses the embedded map and keeps the actual navigation.
+
+The same applies per listing: a property whose owner entered no coordinates shows a "Map location
+not available" panel with its locality, and its directions link resolves against that locality
+rather than against a coordinate nobody supplied. **No coordinate is ever invented** — no `0,0`, no
+city-centre stand-in, and a listing with no position simply gets no marker. The Explore map states
+how many of the current results it cannot plot rather than quietly showing a subset.
+
+### 8.3 Location precision, and what a buyer is shown
+
+Coordinates were already in the schema (`latitude`, `longitude`) and already validated
+(`-90..90`, `-180..180`, both-or-neither, server-side). What Phase 6 added is the question of how
+precisely they may be *published*, because the public projection previously dropped them entirely.
+
+`Property.locationPrecision` is a `LocationPrecision` enum — `EXACT` or `APPROXIMATE` — defaulting
+to **`APPROXIMATE`**:
+
+- **`APPROXIMATE`** rounds the coordinate to three decimals (~110 m, about a city block) and the UI
+  labels the pin "Approximate location" with a note that the exact address is not shown.
+- **`EXACT`** publishes the stored point, labelled "Exact location".
+
+Two things this is not. It is not jitter: no random offset is added, because a random offset
+invents a position nobody chose, moves on every render, and can land on a neighbour's roof.
+Rounding is a real, deterministic property of the real point, so the pin is identical on the browse
+map and the detail map. And it is not a substitute for the address boundary — `addressLine1` and
+`pincode` are still never published at either setting, so the coarsest thing a visitor can see is
+locality-level regardless.
+
+The default is the private one on purpose. Every listing that existed before this feature supplied
+coordinates when there was no public map in the product, so defaulting to `EXACT` would have
+published the door of every existing listing as a side effect of a migration — a consent decision
+the migration is not entitled to make. Owners opt in from the listing form, where the control
+appears only once both coordinates are filled in.
+
+**Limitation worth knowing:** precision is per listing and has two levels. There is no
+"hide from the map entirely while keeping the address" option, and no locality-level (~1 km) middle
+setting. An owner who wants no pin at all leaves the coordinates empty, which is the current
+mechanism.
+
+### 8.4 Nearby places
+
+Not implemented, on purpose, and the section is absent rather than empty.
+
+"1.2 km to the metro" is only worth rendering if it was measured, which needs a places/routing
+provider this deployment does not have. A fabricated distance is worse than a missing one here in a
+way that matters commercially: someone chooses a flat because the listing said the station was a
+ten-minute walk.
+
+`lib/maps/nearby.ts` is the seam, shaped like `lib/properties/ai.ts` and for the same stated
+reason — a capability stays honestly absent until something real fills it, and a mutable slot can
+only be non-null if code filled it, whereas an env flag can be set with nothing behind it. To add a
+provider, implement `NearbyProvider` and call `installNearbyProvider()` during server startup. Put
+its API key in a variable **without** the `NEXT_PUBLIC_` prefix: unlike the maps key, a Places key
+is billed per call and must never reach the browser. `distanceLabel` is a pre-formatted string
+rather than a number of metres so a provider that only knows a straight line has to say so instead
+of having "as the crow flies" rendered as "walking distance".
+
+### 8.5 Database changes
+
+One enum and one column, both additive:
+
+```prisma
+enum LocationPrecision { EXACT  APPROXIMATE }
+
+model Property {
+  locationPrecision LocationPrecision @default(APPROXIMATE)
+}
+```
+
+Apply it the way this project applies every other schema change (§2.3):
+
+```bash
+npx prisma db push
+```
+
+The column has a default, so existing rows are backfilled to `APPROXIMATE` and remain valid.
+Nothing is dropped, renamed or retyped, and no existing data is touched.
+
+**Why there is no `prisma/migrations/` entry.** This project has never used Prisma Migrate — there
+is no migrations directory and no baseline for the tables already in the database. Adding a single
+migration now would make `prisma migrate deploy` fail on a schema it cannot account for, which is a
+worse outcome than the `db push` the README already documents. For an operator who applies changes
+as SQL, the equivalent is:
+
+```sql
+CREATE TYPE "LocationPrecision" AS ENUM ('EXACT', 'APPROXIMATE');
+
+ALTER TABLE "properties"
+  ADD COLUMN "locationPrecision" "LocationPrecision" NOT NULL DEFAULT 'APPROXIMATE';
+```
+
+### 8.6 Performance
+
+- The Maps SDK is requested from an effect in `ExploreMap`, so it loads only when a visitor
+  actually opens the map view. `/buy`, `/rent` and the listing page never request it.
+- `lib/maps/loader.ts` caches one promise at module scope, so two map surfaces share one script tag
+  and one `google.maps` namespace. A failed load clears the cache so a later attempt can retry; a
+  successful one is never repeated.
+- `ExploreMap` is behind `next/dynamic` with `ssr: false`, so the marker lifecycle, the dark style
+  array and the preview card are a separate chunk that the default list view never downloads. With
+  no key configured the chunk is not requested at all.
+- The `google.maps.Map` is constructed once. Filter changes diff the markers; the map, its camera
+  and the SDK are untouched.
+- The listing page's map is an `<iframe>` that is not mounted until an `IntersectionObserver` says
+  it is near the viewport, inside a container with a reserved aspect ratio so mounting it cannot
+  shift the page.
+- `gestureHandling: "cooperative"` means a one-finger drag scrolls the page and two fingers pan the
+  map, so a map in a scrolling column cannot trap the scroll on a phone.
+
+No map dependency was added to `package.json`. Google Maps types are declared in
+`types/google-maps.d.ts`, covering only the members actually called.

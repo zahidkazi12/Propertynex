@@ -24,6 +24,7 @@ import type {
   ContactPreference,
   Furnishing,
   ListingType,
+  LocationPrecision,
   ParkingType,
   PropertyStatus,
   PropertyType,
@@ -175,6 +176,47 @@ export const CONTACT_PREFERENCE_ORDER: readonly ContactPreference[] = [
   "EMAIL",
   "IN_APP",
 ];
+
+/**
+ * How precisely an owner is willing to have their listing pinned on a public map.
+ *
+ * Worded from the seller's point of view, because this is a consent question and
+ * the form is where they answer it. `APPROXIMATE` is first in the order below so
+ * the safer option is the one the eye lands on, and it is the schema default —
+ * see `LocationPrecision` in `prisma/schema.prisma` for why a migration must not
+ * opt anyone into the other one.
+ *
+ * The projection that acts on this is `lib/properties/location.ts`.
+ */
+export const LOCATION_PRECISION_LABELS: Record<LocationPrecision, string> = {
+  APPROXIMATE: "Show the general area only",
+  EXACT: "Show the exact location",
+};
+
+export const LOCATION_PRECISION_ORDER: readonly LocationPrecision[] = [
+  "APPROXIMATE",
+  "EXACT",
+];
+
+/** The consequence of each choice, for the form's helper text. */
+export const LOCATION_PRECISION_DESCRIPTIONS: Record<LocationPrecision, string> = {
+  APPROXIMATE:
+    "Buyers see a pin rounded to roughly a 100-metre area, labelled as approximate. Your street address is never published either way.",
+  EXACT:
+    "Buyers see the precise point you entered. Choose this for a plot, a commercial unit, or anywhere the exact position is the selling point.",
+};
+
+/** What a *buyer* is told about the pin they are looking at. */
+export const LOCATION_PRECISION_BADGES: Record<LocationPrecision, string> = {
+  APPROXIMATE: "Approximate location",
+  EXACT: "Exact location",
+};
+
+export const LOCATION_PRECISION_HINTS: Record<LocationPrecision, string> = {
+  APPROXIMATE:
+    "This pin shows the general area, not the exact address. Ask the seller for the full address.",
+  EXACT: "The seller has published this listing's exact position.",
+};
 
 // ─────────────────────────────────────────────────────────────
 // Who is selling

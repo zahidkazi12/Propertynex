@@ -32,9 +32,13 @@ import "server-only";
  *
  *   - `ownerId` is dropped, so a browse card cannot be joined back to an account.
  *     The seller is described by name and category only.
- *   - `addressLine1/2`, `pincode`, `mapsUrl`, `latitude` and `longitude` are
- *     dropped — on the detail page too. A live listing advertises its locality
- *     and city, not the exact door.
+ *   - `addressLine1/2`, `pincode` and `mapsUrl` are dropped — on the detail page
+ *     too. A live listing advertises its locality and city, not the exact door.
+ *   - `latitude`/`longitude` are not projected as stored. A map pin is published
+ *     as `location`, built by `./location.ts`, which applies the listing's
+ *     `locationPrecision` first and rounds an `APPROXIMATE` pin to a coarser
+ *     grid. Reduced precision, not a fabricated point — and labelled as
+ *     approximate wherever it is drawn.
  *   - No contact field is projected. On the detail page, and only there,
  *     `toPublicSellerContact` may add a phone or an email — and it consults
  *     `contactPreference` to decide, so `IN_APP` ("do not surface my phone or
@@ -58,6 +62,7 @@ import type { PublicListing, PublicListingDetail, PublicSeller, PublicSellerCont
 import { BROWSE_PER_PAGE, type BrowseQuery } from "./browse-query";
 import { browseOrderBy, buildBrowseWhere } from "./browse-where";
 import { favoriteIdsFor, savedPropertyIds } from "./favorites";
+import { toPublicMapLocation } from "./location";
 import { sellerKindForRole } from "./constants";
 import { LIVE_STATUSES } from "./status";
 
@@ -199,6 +204,11 @@ export function toPublicListing(
     locality: property.locality,
     city: property.city,
     state: property.state,
+
+    // The pin, through the precision gate — never `property.latitude/longitude`
+    // directly. Null for a listing with no usable coordinates, which renders as
+    // no marker rather than as a placeholder one.
+    location: toPublicMapLocation(property),
 
     // The badge, not the status. `VERIFIED` is admin-granted — see status.ts.
     verified: property.status === "VERIFIED",
