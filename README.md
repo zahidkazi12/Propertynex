@@ -24,6 +24,7 @@ passcode sent to the email address or mobile number on the account.
 | Password hashing | bcryptjs (12 salt rounds)                          |
 | Passcode hashing | HMAC-SHA256, keyed and session-bound               |
 | OTP delivery   | Pluggable provider (Resend / Twilio), zero SDK deps  |
+| Photo storage  | Pluggable driver — local filesystem, or Vercel Blob (§9) |
 
 No authentication-as-a-service and no third-party email-verification vendor is used anywhere in
 this codebase. Passcode *delivery* goes through a provider seam (`lib/otp/providers/`) that
@@ -176,6 +177,9 @@ the pooled one goes to the connection pooler and the non-pooling one bypasses it
 
 `GET /api/health` reports which of these variables the running server can see and whether a
 trivial query succeeds — the fastest way to tell a missing variable from an unreachable database.
+It also reports the resolved photo-storage driver (§9), so a deployment whose uploads would fail
+says so there instead of at a seller's first upload. Every value in the response is a boolean or a
+name; no credential is ever echoed.
 
 ### 2.6 Build and check status
 
@@ -189,15 +193,17 @@ change, on Node 24 / Next 16.3.1 / Prisma 6.19.3:
 | Type-check | `npx tsc --noEmit` | passes |
 | Lint | `npm run lint` | passes (0 errors, 0 warnings) |
 | Production build | `npm run build` | passes |
-| Unit tests | see §2.4 | 200/200 pass |
-| Integration tests | see §2.4 | **not re-run for Phase 6** — needs a live database |
-| Production fail-closed | see §2.4 | **not re-run for Phase 6** — needs a live database |
+| Unit tests | see §2.4 | 217/217 pass |
+| Integration tests | see §2.4 | **not re-run** — needs a live database |
+| Production fail-closed | see §2.4 | **not re-run** — needs a live database |
+| Blob upload against a real store | §9.6 | **not run** — needs a connected Blob store |
 
-The first four were run against this working tree after the maps work landed. The last two were
-last green on the OTP milestone and are unchanged by Phase 6 — nothing under `app/api/auth/` or
-`lib/otp/` was touched — but they drive real HTTP against a running server and a reachable
-PostgreSQL instance, so they are listed as unverified here rather than assumed. Run them before
-tagging a release.
+The first four were run against this working tree after the Vercel Blob storage driver landed (§9);
+the unit count rose from 200 to 217 with `tests/unit/media-storage-driver.test.ts`. The next two were
+last green on the OTP milestone and are untouched since — nothing under `app/api/auth/` or `lib/otp/`
+has changed — but they drive real HTTP against a running server and a reachable PostgreSQL instance,
+so they are listed as unverified rather than assumed. The last row cannot run here at all: it needs a
+Blob store and a credential. Run all three before tagging a release.
 
 **`prisma db push` is outstanding.** Phase 6 adds the `LocationPrecision` enum and the
 `Property.locationPrecision` column (§8.5). `npx prisma generate` has been run, so the client
@@ -265,7 +271,8 @@ app/
         resend/route.ts        Re-send a passcode (cooldown + resend cap)
         reset/route.ts         Step 3 — reset password, only if stage === OTP_VERIFIED
     profile/route.ts
-    health/route.ts            Env-var presence + a trivial query, for diagnosing a deploy
+    health/route.ts            Env-var presence, a trivial query, and the resolved
+                               storage driver — for diagnosing a deploy
     favorites/route.ts         Save / unsave a live listing
     inquiries/route.ts         Contact a seller (open to signed-out visitors, rate limited)
     media/[id]/route.ts        Serves bytes through an access check — never a storage path
@@ -293,7 +300,8 @@ lib/
   maps/        links.ts (key-free Google Maps URLs), config.ts (browser key),
                loader.ts (single-instance SDK load), nearby.ts (provider seam)
   media/       constants.ts, image.ts (magic-byte sniffing), keys.ts (storage keys),
-               order.ts, read.ts, serialize.ts, storage/ (pluggable driver)
+               order.ts, read.ts, serialize.ts,
+               storage/ (pluggable driver: local.ts, vercel-blob.ts — see §9)
   properties/  constants.ts (labels), format.ts (price/area/date display),
                access.ts, ownership.ts, status.ts, serialize.ts (owner-scoped),
                favorites.ts, browse-query.ts, browse-where.ts,
@@ -492,6 +500,14 @@ internal error details are logged server-side only, never sent to the client.
 - Saving a listing: an optimistic heart on every card and on the detail page, backed by
   `POST/DELETE /api/favorites`
 
+**Photo storage (this milestone):**
+- A second storage driver, Vercel Blob, behind the same three-method seam — so photos survive on a
+  serverless host, where the local filesystem is read-only and uploads previously failed outright
+- The driver is chosen per environment with no configuration: `local` off Vercel, `vercel-blob` on
+  it. Both wrong configurations are refused at startup rather than half-working — §9.2
+- Bytes are stored privately and still reach a browser only through `/api/media/[id]`, so a draft's
+  photos stay as private as the draft — §9.4
+
 **Listing detail and enquiries (this milestone):**
 - `/property/[id]` — gallery, full facts, description, grouped amenities, seller panel and
   similar listings in the same city. A draft id, a malformed id and an unknown id are all the
@@ -517,6 +533,9 @@ internal error details are logged server-side only, never sent to the client.
   failure, and "none of these results has a pin"
 
 **Still to build:**
+- A migration tool for photos already stored on a local disk. `storageDriver` records which driver
+  wrote each row, so old rows are identified rather than lost — but nothing copies them into a Blob
+  store, and on Vercel they serve a 404 — §9.5
 - Owner-facing inbox for received enquiries (`PropertyInquiry` rows are written; nothing reads them)
 - A dashboard `Favorites` screen — the sidebar item is still disabled; saved listings are reachable
   today only through `/explore?saved=1`
@@ -569,6 +588,12 @@ internal error details are logged server-side only, never sent to the client.
       same filtered page
 - [ ] Upload a photo to a listing from the dashboard photo manager → it appears on the card and on
       the detail page, cover first
+- [ ] **On a Vercel preview deployment** (the only place the `vercel-blob` driver runs): upload a
+      photo, reload the page, then redeploy and reload again → it survives both, which is the whole
+      difference from the local driver — §9
+- [ ] Delete that photo → it disappears from the gallery, and its `/api/media/<id>` URL 404s
+- [ ] With no Blob store connected, upload on Vercel → a clear "needs a Blob credential" failure,
+      and the rest of the app keeps working
 - [ ] On Explore, switch to Map → markers appear; apply a filter → the markers change with the
       cards, and the switch stays on Map
 - [ ] Tap a marker → preview card appears with photo, price and a working "View details"
@@ -848,3 +873,110 @@ ALTER TABLE "properties"
 
 No map dependency was added to `package.json`. Google Maps types are declared in
 `types/google-maps.d.ts`, covering only the members actually called.
+
+---
+
+## 9. Photo storage on a serverless host
+
+### 9.1 Why a second driver exists
+
+Uploads used to go to the local filesystem everywhere, and on Vercel that does not work at all.
+A serverless function's filesystem is read-only outside `/tmp`, so the first upload failed with:
+
+```
+ENOENT: no such file or directory, mkdir '/var/task/.media-storage'
+```
+
+No value of `MEDIA_STORAGE_DIR` fixes it — the fault is the filesystem, not the path. `/tmp` would
+be worse than an error: the write would succeed, and the bytes would be invisible to the next
+invocation and gone on the next deploy, so photos would appear to upload and then vanish with
+nothing in any log.
+
+`lib/media/storage/types.ts` was written with this swap in mind, so the fix is an implementation of
+its three methods (`lib/media/storage/vercel-blob.ts`) and one case in `resolveDriver()`. No route,
+no component, no column, and no change to how a photo is addressed: `/api/media/<id>` is still the
+only URL a stored file has, and `PropertyMedia.storageKey` still means the same thing.
+
+### 9.2 Choosing a driver
+
+| `MEDIA_STORAGE_DRIVER` | Off Vercel | On Vercel (`VERCEL=1`) |
+|---|---|---|
+| unset | `local` | `vercel-blob` |
+| `local` | `local` | **refused at startup** |
+| `vercel-blob` | `vercel-blob` | `vercel-blob` |
+| anything else | **refused at startup** | **refused at startup** |
+
+Leaving it unset is the intended configuration — each environment gets the driver that works
+there. Two of those rows are deliberate errors rather than fallbacks:
+
+- **An unknown name** (a misspelled `s3`) does not fall back to the local disk. A deployment that
+  believes it is writing to a bucket while actually writing to an ephemeral container filesystem
+  loses every photo on the next restart, quietly. Failing at startup is the kinder outcome.
+- **`local` on Vercel** is refused rather than obeyed, because it cannot work there. The refusal is
+  a sentence about configuration; obeying it is the `mkdir` stack trace above, several layers deep
+  in an upload request.
+
+### 9.3 Setting up the Blob store
+
+In the Vercel dashboard: **Storage → Create → Blob**, then open the store and **Projects →
+Connect to Project**. Connecting sets `BLOB_STORE_ID` and a short-lived, automatically rotated
+`VERCEL_OIDC_TOKEN`, and the SDK reads both by itself — nothing to paste, and no long-lived secret
+in the project's environment.
+
+`BLOB_READ_WRITE_TOKEN` is the fallback for code running outside Vercel (a CI job, another host, or
+a local machine that has not run `vercel env pull`). It is long-lived: keep it in `.env.local`, never
+in `.env.example` and never in a commit. The application checks only that one of the two forms is
+*present*, so a misconfigured deployment fails at the first upload with a sentence naming the
+variable rather than an SDK authentication error. Neither value is read into a variable, logged or
+echoed anywhere.
+
+**Create the store before the first deploy that expects it.** A connected store is what makes the
+default work; without one, uploads fail with `needs a Blob credential` while the rest of the app
+runs normally.
+
+### 9.4 The store is private, and photos still go through the app
+
+`MEDIA_BLOB_ACCESS` defaults to `private`, and that is the mode to keep. A public blob is served
+straight off the CDN by its URL with no application code in the path — which is the same objection
+that keeps the local driver's root out of `public/`: a DRAFT listing's photos would be readable by
+anyone holding the URL, contradicting what `lib/media/read.ts` promises about unpublished listings.
+
+So bytes are stored privately and reach a browser only through `/api/media/[id]`, which loads the
+row, applies the access rule and streams the result. Nothing a visitor sees changes between drivers.
+
+A store's access mode is chosen when the store is created and cannot be changed afterwards, which is
+the only reason the variable exists — a deployment that already has a public store needs a way to say
+so. An unrecognised value throws rather than degrading to public, for the same fail-closed reason an
+unknown driver name does.
+
+### 9.5 What carries over, and what does not
+
+The storage key is used verbatim as the blob pathname. `lib/media/keys.ts` already produces an
+opaque, server-generated, 128-bit-random key with no client input in it, and slashes in a pathname
+are folder delimiters, so no translation is needed — `PropertyMedia.storageKey` means the same thing
+under both drivers, and existing rows keep working untouched. `addRandomSuffix: false` is load-bearing
+rather than a preference: a suffix would make the stored pathname disagree with the database column,
+and every later read of that row would miss. `isSafeStorageKey` runs on every call here for the same
+reason it does in the local driver — a tampered or corrupted `storageKey` must not become an arbitrary
+object fetch.
+
+`PropertyMedia.storageDriver` records which driver wrote each row, so switching the installed driver
+does not make previously uploaded photos unreadable — but it does mean **photos already stored on a
+local disk are not migrated**. Rows written under `local` still point at a filesystem the Vercel
+deployment cannot read, and they will serve a 404 with a logged `stored object missing`. For a
+deployment whose photos were only ever local test data, re-uploading is the whole of the migration;
+there is no copy tool, and nothing in this milestone adds one.
+
+### 9.6 Test coverage
+
+`tests/unit/media-storage-driver.test.ts` (17 tests, part of the unit suite in §2.4) covers
+everything decided before a request is made: the resolution table in §9.2, `VERCEL` read as a flag
+rather than any non-empty string, the access-mode default and its fail-closed parsing, both
+credential forms plus the half-configured OIDC case, and the key guard — every hostile
+`storageKey` shape from `media-storage-key.test.ts`, asserted to throw on write and to be a
+null read and a no-op delete, all without network access.
+
+Upload, read-back and delete against a live store are **not** covered. They need a real Blob store
+and a credential, so they belong with the integration suite; a mocked `put` would only assert that
+the driver calls the function it obviously calls. Verify them by uploading a photo through the
+dashboard photo manager on a preview deployment (§6's photo-upload item) before trusting a release.

@@ -37,6 +37,8 @@
     "../lib/media/order.ts",
     "../lib/media/serialize.ts",
     "../lib/media/storage/local.ts",
+    "../lib/media/storage/index.ts",
+    "../lib/media/storage/vercel-blob.ts",
     "../lib/validation/media.ts",
     "../lib/maps/links.ts",
     "../lib/properties/location.ts"

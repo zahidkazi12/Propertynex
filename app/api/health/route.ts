@@ -1,5 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
+import { getMediaStorageName } from "@/lib/media/storage";
+
+/**
+ * `/api/health` — which variables the running server can see, and whether the
+ * things they configure actually work.
+ *
+ * Every value here is a boolean or a name, never a secret: the point is to tell a
+ * missing variable apart from a broken connection, and the value of a credential
+ * is not needed for that.
+ */
 
 export async function GET() {
   const checks: Record<string, unknown> = {
@@ -25,6 +35,19 @@ export async function GET() {
       error: e.message,
       name: e.name,
     };
+  }
+
+  // Resolving the driver is the check: it throws when the driver name is unknown,
+  // when `local` is set on Vercel, or when the Blob driver has no credential — the
+  // three ways a deployment can be configured such that the first upload fails.
+  // Doing it here means that is a line in a diagnostic response rather than a
+  // stack trace inside a seller's upload request.
+  try {
+    checks.mediaStorage = { driver: getMediaStorageName(), configured: true };
+  } catch (error: unknown) {
+    // The messages these throw are written for an operator and name only variables,
+    // never values — see `lib/media/storage/index.ts` and `.../vercel-blob.ts`.
+    checks.mediaStorage = { configured: false, error: (error as Error).message };
   }
 
   return NextResponse.json(checks);
