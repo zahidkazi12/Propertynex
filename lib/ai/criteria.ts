@@ -275,14 +275,16 @@ const nullablePlace = z.preprocess(
   absent,
   z
     .string()
-    .transform((value) =>
-      value
+    .transform((value) => {
+      const cleaned = value
         .replace(/\s+/g, " ")
         .replace(PLACE_DISALLOWED, " ")
         .replace(/\s+/g, " ")
         .trim()
-        .slice(0, MAX_QUERY_LENGTH)
-    )
+        .slice(0, MAX_QUERY_LENGTH);
+
+      return cleaned.length > 0 && /[\p{L}\p{N}]/u.test(cleaned) ? cleaned : null;
+    })
     .optional()
 );
 
@@ -314,7 +316,7 @@ export const aiCriteriaSchema = z.object({
   // reports what it dropped so the visitor is told rather than left guessing.
   amenities: z.preprocess(
     (value) => (value === null || value === undefined ? [] : value),
-    z.array(z.string()).max(64).default([])
+    z.array(z.string()).max(AMENITY_SLUGS.length * 2).default([])
   ),
 
   minArea: nullableAmount(MAX_AREA_SQFT),
