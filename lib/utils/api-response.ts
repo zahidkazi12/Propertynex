@@ -1,8 +1,29 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
-export function jsonError(message: string, status: number, fieldErrors?: Record<string, string>) {
-  return NextResponse.json({ error: message, fieldErrors }, { status });
+/**
+ * Extra top-level keys on an error body.
+ *
+ * Added for the AI search endpoint, which has several distinct failure modes the
+ * client renders differently — "temporarily unavailable" and "I could not read
+ * that" call for different copy and different controls. Branching on the
+ * `message` string would couple the panel to wording that is meant to be
+ * editable, so the endpoint sends a short `code` from a closed union alongside
+ * it (see `AiFailureCode`).
+ *
+ * Optional, so every existing caller is unchanged, and deliberately narrow: this
+ * is for machine-readable classification, never for internal detail. Nothing
+ * that would not already be safe in `message` belongs here.
+ */
+export type ErrorMeta = { readonly code?: string };
+
+export function jsonError(
+  message: string,
+  status: number,
+  fieldErrors?: Record<string, string>,
+  meta?: ErrorMeta
+) {
+  return NextResponse.json({ error: message, fieldErrors, ...meta }, { status });
 }
 
 export function jsonOk<T extends object>(data: T, status = 200) {

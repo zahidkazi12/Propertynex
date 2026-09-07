@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { PageShell } from "@/components/layout/PageShell";
 import { BrowseView } from "@/components/marketplace/BrowseView";
+import { isAiSearchAvailable } from "@/lib/ai/provider";
 import { getCurrentUser } from "@/lib/auth/session";
+import { availableSorts } from "@/lib/properties/ai";
 import {
   browsePublicListings,
   parseBrowseQuery,
@@ -34,13 +36,24 @@ export default async function ExplorePage({
 }: {
   searchParams: Promise<RawSearchParams>;
 }) {
-  const query = parseBrowseQuery(await searchParams);
+  // One call, used twice: as the parser's allowlist and as the dropdown's option
+  // list, so a hand-typed `?sort=ai-match` and the control can never disagree
+  // about whether that sort exists. See lib/properties/ai.ts.
+  const sorts = availableSorts();
+  const query = parseBrowseQuery(await searchParams, { allowedSorts: sorts });
   const user = await getCurrentUser();
   const result = await browsePublicListings(query, { viewerId: user?.id ?? null });
 
   return (
     <PageShell>
-      <BrowseView basePath="/explore" query={query} result={result} signedIn={user !== null} />
+      <BrowseView
+        basePath="/explore"
+        query={query}
+        result={result}
+        signedIn={user !== null}
+        sorts={sorts}
+        aiAvailable={isAiSearchAvailable()}
+      />
     </PageShell>
   );
 }

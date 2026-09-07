@@ -4,13 +4,19 @@ import Link from "next/link";
 import { ArrowRight, PlugZap, SearchX, Sparkles, Tag, type LucideIcon } from "lucide-react";
 import { Reveal } from "@/components/ui/Reveal";
 import { ExploreMapPanel } from "@/components/maps/ExploreMapPanel";
+import { AiSearchPanel } from "@/components/marketplace/AiSearchPanel";
 import { IntentSwitch } from "@/components/marketplace/IntentSwitch";
 import { ListingCard } from "@/components/marketplace/ListingCard";
 import { ListingFilters } from "@/components/marketplace/ListingFilters";
 import { Pagination } from "@/components/marketplace/Pagination";
 import { ViewSwitch } from "@/components/marketplace/ViewSwitch";
 import { groupIndian } from "@/lib/properties/format";
-import { browseQueryString, hasActiveFilters, type BrowseQuery } from "@/lib/properties/browse-query";
+import {
+  browseQueryString,
+  hasActiveFilters,
+  type BrowseQuery,
+  type BrowseSort,
+} from "@/lib/properties/browse-query";
 import type { BrowseResult } from "@/lib/properties/public";
 
 /**
@@ -145,12 +151,32 @@ export function BrowseView({
   query,
   result,
   signedIn = false,
+  sorts,
+  aiAvailable = false,
 }: {
   basePath: string;
   query: BrowseQuery;
   result: BrowseResult;
   /** Decides whether a heart saves or sends the visitor to log in. */
   signedIn?: boolean;
+  /**
+   * The sorts this deployment actually offers, from `availableSorts()`.
+   *
+   * Passed in rather than read from `BROWSE_SORTS` so the dropdown and
+   * `parseBrowseQuery`'s `allowedSorts` are the same list from one call — a
+   * dropdown offering a sort the parser rejects is an option that silently does
+   * nothing, which is the failure `lib/properties/ai.ts` exists to prevent.
+   */
+  sorts?: readonly BrowseSort[];
+  /**
+   * Whether an AI provider is configured. Decided on the server — a Client
+   * Component reading the environment would inline `undefined` at build time.
+   *
+   * False renders no assistant at all rather than a broken one: an unconfigured
+   * capability is absent, the same posture `ExploreMapPanel` takes without a
+   * maps key.
+   */
+  aiAvailable?: boolean;
 }) {
   const copy = COPY[query.intent ?? "ALL"];
   const isFiltered = hasActiveFilters(query);
@@ -197,7 +223,23 @@ export function BrowseView({
       {/* Filters + results. */}
       <section className="relative pb-20 sm:pb-28">
         <div className="shell">
-          <ListingFilters basePath={basePath} query={query} />
+          {/*
+           * The assistant sits above the filter bar, not inside it: it produces
+           * a query, the filter bar edits one, and stacking them keeps either
+           * usable on its own. `filters` is the page's own query string, so a
+           * budget the visitor typed into the form is carried into the AI request
+           * and wins there — see lib/ai/merge.ts.
+           */}
+          {aiAvailable && (
+            <AiSearchPanel
+              basePath={basePath}
+              filters={browseQueryString(query)}
+              signedIn={signedIn}
+              redirectTo={redirectTo}
+            />
+          )}
+
+          <ListingFilters basePath={basePath} query={query} sorts={sorts} />
 
           {result.available && result.total > 0 && (
             <>

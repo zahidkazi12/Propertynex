@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
+import { describeAiProvider } from "@/lib/ai/provider";
 import { getMediaStorageName } from "@/lib/media/storage";
 
 /**
@@ -49,6 +50,14 @@ export async function GET() {
     // never values — see `lib/media/storage/index.ts` and `.../vercel-blob.ts`.
     checks.mediaStorage = { configured: false, error: (error as Error).message };
   }
+
+  // AI search. `describeAiProvider` never throws and never returns a credential:
+  // `{configured: false}` with no error means no provider is selected, which is a
+  // supported deployment and not a fault. An `error` field means one *was*
+  // selected and cannot be built — a sentence naming the missing variable, so an
+  // operator finds out here instead of wondering why the assistant panel never
+  // renders.
+  checks.aiSearch = describeAiProvider();
 
   return NextResponse.json(checks);
 }

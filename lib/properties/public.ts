@@ -60,7 +60,7 @@ import { isValidRecordId } from "@/lib/utils/record-id";
 import type { PublicListing, PublicListingDetail, PublicSeller, PublicSellerContact } from "@/types";
 
 import { BROWSE_PER_PAGE, type BrowseQuery } from "./browse-query";
-import { browseOrderBy, buildBrowseWhere } from "./browse-where";
+import { browseOrderBy, buildBrowseWhere, type BrowseExtra } from "./browse-where";
 import { favoriteIdsFor, savedPropertyIds } from "./favorites";
 import { toPublicMapLocation } from "./location";
 import { sellerKindForRole } from "./constants";
@@ -270,6 +270,12 @@ export type BrowseOptions = {
    * query returns — a signed-in user sees exactly the listings a stranger sees.
    */
   readonly viewerId?: string | null;
+  /**
+   * Predicates with no URL representation — currently only "has parking of some
+   * kind", which the AI assistant can ask for and the filter vocabulary cannot
+   * express. See `BrowseExtra`; it can only narrow, never widen.
+   */
+  readonly extra?: BrowseExtra;
 };
 
 /**
@@ -312,7 +318,7 @@ export async function browsePublicListings(
       return empty(true);
     }
 
-    const where = buildBrowseWhere(query, savedFilterIds);
+    const where = buildBrowseWhere(query, savedFilterIds, options.extra ?? {});
 
     const [rows, total] = await Promise.all([
       prisma.property.findMany({

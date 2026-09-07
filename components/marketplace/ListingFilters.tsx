@@ -15,6 +15,7 @@ import {
   BROWSE_SORT_LABELS,
   hasActiveFilters,
   type BrowseQuery,
+  type BrowseSort,
 } from "@/lib/properties/browse-query";
 
 /**
@@ -66,13 +67,35 @@ const SORT_OPTIONS = BROWSE_SORTS.map((sort) => ({
 export function ListingFilters({
   basePath,
   query,
+  sorts,
 }: {
   /** `/buy` or `/rent` — the form's own action, so it round-trips to itself. */
   basePath: string;
   query: BrowseQuery;
+  /**
+   * The sorts this deployment offers, from `availableSorts()` on the server.
+   *
+   * Defaults to every sort so an existing caller is unchanged. The reason it is
+   * a prop at all: `BROWSE_SORTS` includes `ai-match`, which
+   * `lib/properties/ai.ts` withholds unless a `MatchScorer` is installed — and
+   * none is. Rendering the full list here put an "AI match score" option in the
+   * dropdown that `parseBrowseQuery` then dropped, so choosing it silently sorted
+   * by relevance. That is precisely the lie that module was written to prevent;
+   * taking the list from the same call the parser uses is the fix.
+   *
+   * AI *matching* is not gone — it is in the assistant panel, which has real
+   * criteria to score against. A plain filter query has none, so there is nothing
+   * for this dropdown to honestly sort by.
+   */
+  sorts?: readonly BrowseSort[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  const sortOptions =
+    sorts === undefined
+      ? SORT_OPTIONS
+      : sorts.map((sort) => ({ value: sort, label: BROWSE_SORT_LABELS[sort] }));
 
   const isFiltered = hasActiveFilters(query);
 
@@ -183,7 +206,7 @@ export function ListingFilters({
             label="Sort by"
             name="sort"
             defaultValue={query.sort}
-            options={SORT_OPTIONS}
+            options={sortOptions}
             onChange={(event) => {
               const form = event.currentTarget.form;
               if (form) submit(form);

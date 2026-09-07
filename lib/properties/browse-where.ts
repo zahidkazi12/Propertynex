@@ -98,6 +98,45 @@ function searchClause(text: string): Prisma.PropertyWhereInput {
 }
 
 /**
+ * Predicates a browse query can carry that the URL vocabulary cannot express.
+ *
+ * ── Why this exists, and why it is a named record and not a `where` fragment ─
+ *
+ * "With parking" — no particular kind, just some — is an ordinary thing to ask
+ * for and is not a member of `ParkingType`. The enum's four members describe
+ * what a listing *has*, and they are also the write vocabulary, so adding an
+ * "any" member there would let a seller store "any" as a fact about their
+ * property. The request therefore lives here instead of in `BrowseQuery`.
+ *
+ * The type is a closed record of named booleans rather than a
+ * `Prisma.PropertyWhereInput` the caller assembles, and that is the whole safety
+ * argument: an escape hatch shaped like a raw `where` is one that can eventually
+ * *widen* the query — including past the `status` invariant this module's header
+ * calls non-negotiable. A named flag can only be translated into the one clause
+ * written for it, below, and adding a second flag is a visible edit to this file
+ * with a test attached rather than a call site quietly passing more.
+ *
+ * Every field is optional and absent means "no extra predicate", so existing
+ * callers are unaffected — `buildBrowseWhere(query)` and
+ * `buildBrowseWhere(query, savedIds)` behave exactly as before.
+ */
+export type BrowseExtra = {
+  /**
+   * The listing must have parking of some kind.
+   *
+   * `NONE` is excluded, and so is a listing that never stated one: a null column
+   * is missing information, not a promise of a parking space. That asymmetry is
+   * the same one `lib/ai/match.ts` scores — unknown is neither a match nor a
+   * miss — and it is why this cannot be written as `NOT: { parking: "NONE" }`,
+   * which in SQL keeps the nulls out anyway but reads as though it would not.
+   */
+  readonly requireParking?: boolean;
+};
+
+/** Every parking value that counts as "has parking". */
+const PARKING_PRESENT = ["OPEN", "COVERED", "BOTH"] as const;
+
+/**
  * Build the `where` for a browse query.
  *
  * `savedIds` is supplied by the caller when the visitor asked for saved listings
@@ -105,10 +144,15 @@ function searchClause(text: string): Prisma.PropertyWhereInput {
  * while `query.savedOnly` is set is not an error and not "no filter": it means
  * nobody is signed in, and the clause becomes `id: { in: [] }`, an honest empty
  * result rather than the whole marketplace.
+ *
+ * `extra` carries the predicates that have no URL representation — see
+ * `BrowseExtra`. It can only narrow: every flag it defines is pushed onto `AND`,
+ * never onto the object directly and never onto `status`.
  */
 export function buildBrowseWhere(
   query: BrowseQuery,
-  savedIds: readonly string[] | null = null
+  savedIds: readonly string[] | null = null,
+  extra: BrowseExtra = {}
 ): Prisma.PropertyWhereInput {
   // Every clause that could be independently true goes in `AND` rather than onto
   // the object directly, so no two of them can collide over `OR`.
@@ -177,6 +221,13 @@ export function buildBrowseWhere(
   }
 
   if (query.q !== "") and.push(searchClause(query.q));
+
+  // "Some parking", from the AI assistant. Written as an explicit `in` over the
+  // three affirmative members rather than as a negation, so a listing whose
+  // `parking` column was never filled in is excluded — unknown is not a yes.
+  if (extra.requireParking) {
+    and.push({ parking: { in: [...PARKING_PRESENT] } });
+  }
 
   if (and.length > 0) where.AND = and;
 
